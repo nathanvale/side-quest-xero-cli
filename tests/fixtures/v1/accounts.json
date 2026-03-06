@@ -1,0 +1,6 @@
+{
+	"Accounts": [
+		{ "Code": "400", "Status": "ACTIVE", "Name": "Advertising" },
+		{ "Code": "401", "Status": "ACTIVE", "Name": "Supplies" }
+	]
+}

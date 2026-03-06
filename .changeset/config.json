@@ -4,7 +4,7 @@
 	"baseBranch": "main",
 	"changelog": [
 		"@changesets/changelog-github",
-		{ "repo": "nathanvale/tax-return" }
+		{ "repo": "nathanvale/side-quest-xero-cli" }
 	],
 	"commit": false,
 	"packages": ["."],

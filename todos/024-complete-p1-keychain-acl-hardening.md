@@ -14,7 +14,7 @@ The Keychain implementation has three security issues: (1) Default ACLs may allo
 
 ## Findings
 
-- `security add-generic-password -s xero-tax-return -a <key> -w <value> -U`
+- `security add-generic-password -s side-quest-xero-cli -a <key> -w <value> -U`
 - `-U` flag silently updates existing entries -- can overwrite from another tool
 - No `-T` flag (trusted application) to restrict access to specific binary
 - Separate entries for `access_token`, `refresh_token`, `refresh_token_prev`, `expires_at`
@@ -44,7 +44,7 @@ The Keychain implementation has three security issues: (1) Default ACLs may allo
 
 ### Option 2: Add ACL restrictions + keep separate entries
 
-**Approach:** Use `-T /path/to/bun` flag to restrict Keychain access to the Bun binary. Use more specific account names like `xero-tax-return:v1:access_token`.
+**Approach:** Use `-T /path/to/bun` flag to restrict Keychain access to the Bun binary. Use more specific account names like `side-quest-xero-cli:v1:access_token`.
 
 **Pros:**
 - Restricts which apps can read tokens
@@ -89,7 +89,7 @@ Option 1 implemented: Single serialized token bundle.
 
 **Actions:**
 - Changed Keychain storage from 4 separate entries to 1 JSON blob entry (`KeychainTokenBundle`)
-- Updated service name from `xero-tax-return` to `com.nathanvale.tax-return.xero` (reverse-DNS to avoid collisions)
+- Updated service name from `side-quest-xero-cli` to `com.nathanvale.side-quest-xero-cli.xero` (reverse-DNS to avoid collisions)
 - Updated account name from per-field keys (`access_token`, etc.) to single `oauth-tokens`
 - Updated `saveTokens()` and `loadTokens()` to serialize/deserialize JSON
 - Added `deleteTokens()` for logout/re-auth
@@ -100,4 +100,4 @@ Option 1 implemented: Single serialized token bundle.
 
 **Learnings:**
 - Single JSON blob in Keychain is simpler than managing multiple entries
-- Reverse-DNS naming (`com.nathanvale.tax-return.xero`) is standard macOS convention for avoiding collisions
+- Reverse-DNS naming (`com.nathanvale.side-quest-xero-cli.xero`) is standard macOS convention for avoiding collisions

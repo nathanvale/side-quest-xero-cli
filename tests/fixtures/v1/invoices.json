@@ -1,0 +1,16 @@
+{
+	"Invoices": [
+		{
+			"InvoiceID": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			"Status": "AUTHORISED",
+			"AmountDue": 120.0,
+			"CurrencyCode": "AUD"
+		},
+		{
+			"InvoiceID": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+			"Status": "AUTHORISED",
+			"AmountDue": 80.0,
+			"CurrencyCode": "AUD"
+		}
+	]
+}

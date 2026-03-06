@@ -61,7 +61,13 @@ website/.cache-loader/
 website/build/
 website/node_modules/
 
+# Xero data exports (real financial data -- never commit)
+data/
+
 # Xero
 .xero-config.json
 .xero-reconcile-state.json
+.xero-reconcile-runs/
+.xero-reconcile-lock.json
 .xero-session/
+.xero-token-refresh.lock

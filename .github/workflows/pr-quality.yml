@@ -80,7 +80,7 @@ jobs:
           # See: https://github.com/oven-sh/bun/issues/23615
 
           # Count packages outside node_modules (excluding known project dirs)
-          KNOWN_DIRS="src|tests|docs|website|scripts|examples|.git|.github|.changeset|.vscode|dist|coverage|node_modules"
+          KNOWN_DIRS="src|tests|docs|website|scripts|examples|.git|.github|.vscode|dist|coverage|node_modules"
           ROGUE_COUNT=$(find . -maxdepth 1 -type d ! -name '.' | grep -Evc "^\./($KNOWN_DIRS)$" || echo 0)
           echo "Before cleanup: $ROGUE_COUNT rogue folders found in project root"
 
