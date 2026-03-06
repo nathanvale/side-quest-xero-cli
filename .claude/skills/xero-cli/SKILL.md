@@ -101,6 +101,10 @@ Events are fire-and-forget HTTP POSTs. They never block or slow down CLI operati
 
 These rules apply to ALL workflows that use xero-cli.
 
+### Auth Prerequisite
+
+If `status` reports `invalid-config` with `nextAction: FIX_CONFIG`, or `.xero-config.json` does not exist, run `bun run xero-cli auth` immediately. Do NOT ask the user whether to authenticate -- auth is a mandatory prerequisite and the only fix. The user will complete the browser-based OAuth flow when prompted.
+
 ### BankTransactionID Immutability
 
 BankTransactionID is an opaque key. Carry it unchanged from the `transactions` fetch through proposal, review, and execute.
