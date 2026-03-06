@@ -103,7 +103,7 @@ These rules apply to ALL workflows that use xero-cli.
 
 ### Auth Prerequisite
 
-If `status` reports `invalid-config` with `nextAction: FIX_CONFIG`, or `.xero-config.json` does not exist, run `bun run xero-cli auth` immediately. Do NOT ask the user whether to authenticate -- auth is a mandatory prerequisite and the only fix. The user will complete the browser-based OAuth flow when prompted.
+If `status` reports `invalid-config` with `nextAction: FIX_CONFIG`, or `.xero-config.json` does not exist, auth is the mandatory next step. Do NOT ask the user whether to authenticate -- there is no alternative path. Tell the user to run `bun run xero-cli auth` in their terminal (it opens a browser for OAuth2 and requires human interaction -- do NOT run it via Bash tool). Once they confirm auth is complete, verify with `bun run xero-cli status` and continue the workflow.
 
 ### BankTransactionID Immutability
 
