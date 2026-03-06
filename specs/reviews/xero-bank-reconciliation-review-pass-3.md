@@ -7,8 +7,8 @@
 - You already have a redaction policy, which is better than most v1 CLI plans.
 
 3. **Critical issues (must fix before implementation)**
-- **Keychain access control is too weak/ambiguous**. With `security add-generic-password -s xero-tax-return -a <key> -w ... -U`, any same-user process can likely call `/usr/bin/security` and read/overwrite these items if ACLs permit. This is a real local-token theft/tampering risk for financial credentials.
-- **Service/account namespace collision is real**. A shared service name (`xero-tax-return`) + generic accounts (`access_token`, `refresh_token`) enables cross-tool overwrite/poisoning. `-U` makes this worse by silently updating existing records.
+- **Keychain access control is too weak/ambiguous**. With `security add-generic-password -s side-quest-xero-cli -a <key> -w ... -U`, any same-user process can likely call `/usr/bin/security` and read/overwrite these items if ACLs permit. This is a real local-token theft/tampering risk for financial credentials.
+- **Service/account namespace collision is real**. A shared service name (`side-quest-xero-cli`) + generic accounts (`access_token`, `refresh_token`) enables cross-tool overwrite/poisoning. `-U` makes this worse by silently updating existing records.
 - **Token persistence is non-atomic and can create torn auth state**. Storing `refresh_token`, `access_token`, `expires_at` as separate items means crash/interruption can leave inconsistent tuples. For single-use refresh tokens, this can strand the session or trigger bad recovery logic.
 - **Payment execution safety is insufficient**. Real payment creation should not be a casual default. `--dry-run` opt-in is dangerous; accidental live execution is a direct money-movement risk.
 - **Error context leakage risk is unresolved**. `StructuredError.context` and default error serialization can leak OAuth code/verifier/token/request bodies unless you enforce strict allowlist-based logging and sanitization on all thrown errors.

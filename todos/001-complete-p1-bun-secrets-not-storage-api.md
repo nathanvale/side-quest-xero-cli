@@ -29,7 +29,7 @@ The plan relies on `Bun.secrets.set()` and `Bun.secrets.get()` for macOS Keychai
 async function saveToKeychain(key: string, value: string): Promise<void> {
   const proc = Bun.spawn([
     'security', 'add-generic-password', '-U',
-    '-s', 'xero-tax-return', '-a', key, '-w', value,
+    '-s', 'side-quest-xero-cli', '-a', key, '-w', value,
   ])
   await proc.exited
   if (proc.exitCode !== 0) throw new Error(`Keychain write failed for ${key}`)
@@ -38,7 +38,7 @@ async function saveToKeychain(key: string, value: string): Promise<void> {
 async function loadFromKeychain(key: string): Promise<string | null> {
   const proc = Bun.spawn([
     'security', 'find-generic-password',
-    '-s', 'xero-tax-return', '-a', key, '-w',
+    '-s', 'side-quest-xero-cli', '-a', key, '-w',
   ], { stdout: 'pipe', stderr: 'pipe' })
   await proc.exited
   if (proc.exitCode !== 0) return null

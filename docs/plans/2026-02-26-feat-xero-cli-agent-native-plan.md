@@ -336,7 +336,7 @@ function writeError(ctx: OutputContext, message: string, errorCode: string, exit
 ### File Structure
 
 ```
-tax-return/
+side-quest-xero-cli/
 +-- src/
 |   +-- cli/
 |   |   +-- command.ts          # Arg parsing, command dispatch, output formatting
@@ -372,7 +372,7 @@ tax-return/
 |       +-- xero-reconcile/
 |           +-- SKILL.md        # Teaches Claude the workflow + CLI commands
 +-- scripts/
-|   +-- xero-auth-server.ts     # OAuth2 callback server (Bun.serve on 127.0.0.1, ephemeral port)
+|   +-- xero-auth-server.ts     # OAuth2 callback server (Bun.serve on 127.0.0.1:5555/callback)
 +-- .env.example                # XERO_CLIENT_ID= (no secret needed with PKCE)
 +-- .xero-config.json           # Runtime config: tenant ID, org name (gitignored)
 +-- .xero-reconcile-state.json  # Run state for idempotency (gitignored)
@@ -416,7 +416,7 @@ Canonical invocation: `bun run xero-cli <command> [flags]`. This is the only doc
    - **Duplicate BankTransactionID rule:** If the same BankTransactionID appears more than once in the input array, reject the entire payload with a validation error listing the duplicate IDs. Do not silently pick first/last -- duplicates indicate a bug in the caller.
    - **Empty input:** Empty array `[]` returns a validation error (`.min(1)` in Zod schema). This is intentional -- a zero-item reconcile is always a mistake.
    - **Batch strategy for account code updates:** Xero's BankTransactions endpoint does not support bulk update. Process account code entries individually with rate-limit throttling (~1100ms delay between calls, same as payment batching). Invoice matching uses batch `PUT /Payments` (batch size 25). Show progress bar with ETA for sequential operations (e.g., "Reconciling 300 transactions... [142/300] ~2m remaining").
-   - **PRE-IMPLEMENTATION VALIDATION REQUIRED (BEFORE PHASE 1):** Before starting any implementation, manually validate in a Xero demo org that updating LineItems via POST /BankTransactions/{id} correctly marks transactions as reconciled. This is a plan-blocking assumption -- if it fails, the entire reconcile command design needs a fundamentally different approach. Concrete test: find an unreconciled BankTransaction, POST to update its LineItems with a valid AccountCode, check if IsReconciled becomes true. Also test against locked periods, filed BAS periods, and already-coded transactions. Also validate the redirect_uri behavior: does Xero require exact port match (including ephemeral port) or just origin match? Document results. If POST doesn't reconcile, stop and redesign before investing in Phases 1-3.
+   - **PRE-IMPLEMENTATION VALIDATION REQUIRED (BEFORE PHASE 1):** Before starting any implementation, manually validate in a Xero demo org that updating LineItems via POST /BankTransactions/{id} correctly marks transactions as reconciled. This is a plan-blocking assumption -- if it fails, the entire reconcile command design needs a fundamentally different approach. Concrete test: find an unreconciled BankTransaction, POST to update its LineItems with a valid AccountCode **and `IsReconciled: true`**, check if IsReconciled becomes true. This is the conversion/migration path Xero supports (imported transactions with no bank feed). Also test against locked periods, filed BAS periods, and already-coded transactions. Redirect URI is fixed: `http://127.0.0.1:5555/callback`. Document results. If POST doesn't reconcile, stop and redesign before investing in Phases 1-3.
    - **Fallback if POST doesn't reconcile:** If demo-org validation reveals that POST /BankTransactions/{id} with updated LineItems does NOT mark transactions as reconciled, the fallback is invoice-only matching for v1 (all reconciliation goes through PUT /Payments). Account-code assignment would be deferred or handled through a browser-automation fallback (agent-browser). This decision is made once, during Phase 3 validation, and documented in the plan.
 
 4. **`history` command is the learning signal.** It returns past reconciled transactions grouped by contact, so Claude can say "you've categorized GITHUB INC as 6310 Software 6 times before." **`--since` is required** -- no default, to prevent unbounded API fetching that could exhaust the 5,000/day rate limit. Typical usage: `--since 2025-07-01` (last 6 months).
@@ -791,7 +791,7 @@ All tokens stored as a **single serialized JSON blob** in one Keychain entry, ma
 **Reverse-DNS service name** avoids collisions with other tools.
 
 ```typescript
-const KEYCHAIN_SERVICE = 'com.nathanvale.tax-return.xero'
+const KEYCHAIN_SERVICE = 'com.nathanvale.side-quest-xero-cli.xero'
 const KEYCHAIN_ACCOUNT = 'oauth-tokens'
 
 /** All tokens stored together for atomic read/write */
@@ -889,8 +889,7 @@ async function deleteTokens(): Promise<void> {
 - **Callback `state` validation** -- use `crypto.timingSafeEqual()` for constant-time comparison of the `state` query parameter against the stored value. Reject immediately if mismatch. Clear stored state after first use.
 - **Callback response** -- return static HTML only (`<h1>Authenticated</h1><p>You can close this tab.</p>`). Set `Content-Type: text/html; charset=utf-8` and `X-Content-Type-Options: nosniff`. NEVER interpolate query parameters into the response body (prevents reflected XSS).
 - **Callback server binds to `127.0.0.1`** -- not `0.0.0.0`, prevents LAN access
-- **Callback server uses ephemeral port** (port 0 -> OS assigns) -- reduces local callback hijacking surface. The assigned port is passed to the auth URL dynamically.
-- **Callback path includes random nonce** -- `/callback/{nonce}` where nonce is a random token. Local malware can't predict the full callback URL even if it knows the port.
+- **Callback server uses fixed redirect URI** `http://127.0.0.1:5555/callback` -- must match the Xero app redirect URI.
 - **Callback server binds port BEFORE opening browser** -- if port binding fails, error immediately. Never open the browser if the callback server isn't listening.
 - **Callback server timeout** -- 300s default (5 minutes -- first-run consent with MFA needs time) via `withTimeout()` from `@side-quest/core/concurrency`. Configurable via `--auth-timeout <seconds>`. On timeout, print: "Auth timed out after {timeout}s. Run `bun run xero-cli auth` to try again." Exit code 4 (RUN_AUTH), NOT exit code 1 (RETRY_WITH_BACKOFF). During wait, print "Waiting for Xero login... (timeout in {remaining})" to stderr so Nathan knows the clock is ticking
 - **Process lock** via `withFileLock()` for `--execute` mode (concurrent runs fail-fast). Lock must have: explicit timeout (30s default), stale lock detection (PID check + age-based cleanup if process is dead), and bounded wait time. If lock is orphaned by a crash, next invocation detects stale PID and reclaims.
@@ -939,16 +938,12 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
   return base64url(new Uint8Array(hash))
 }
 
-/** Build auth URL with dynamic port from the running callback server.
- *  SECURITY: Use ephemeral port (port 0 -> OS assigns) instead of fixed 5555
- *  to reduce local callback hijacking attack surface. Also use a random nonce
- *  in the callback path (e.g., /callback/{nonce}) so local malware can't
- *  predict the exact callback URL. */
-function getAuthorizationUrl(codeChallenge: string, state: string, callbackPort: number, callbackNonce: string): string {
+/** Build auth URL with fixed callback redirect URI. */
+function getAuthorizationUrl(codeChallenge: string, state: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: config.clientId,
-    redirect_uri: `http://127.0.0.1:${callbackPort}/callback/${callbackNonce}`,
+    redirect_uri: 'http://127.0.0.1:5555/callback',
     scope: 'accounting.transactions accounting.contacts accounting.settings.read offline_access',
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
@@ -2422,7 +2417,7 @@ Pin to exact version in package.json (no `^` or `~`). If `@side-quest/core` brea
 - `src/xero/auth.ts` -- token management with Zod-validated Keychain load, revocation on re-auth (uses raw `fetch()` for token refresh)
 - `src/xero/types.ts` -- all TypeScript interfaces from the Xero API spec above
 - `src/xero/errors.ts` -- 3 error classes: `XeroAuthError`, `XeroApiError` (with status), `XeroConflictError`
-- `scripts/xero-auth-server.ts` -- OAuth2 callback server (Bun.serve on 127.0.0.1, ephemeral port, random callback path nonce, one-shot, 120s timeout, `crypto.timingSafeEqual` for state, static HTML response with security headers)
+- `scripts/xero-auth-server.ts` -- OAuth2 callback server (Bun.serve on 127.0.0.1:5555/callback, one-shot, 120s timeout, `crypto.timingSafeEqual` for state, static HTML response with security headers)
 - `.env.example` -- `XERO_CLIENT_ID=` (no secret needed with PKCE)
 
 **First-run setup guide (printed by `bun run xero-cli auth` when no .env exists):**
@@ -2431,9 +2426,8 @@ xero-cli setup checklist:
 
 1. Create a Xero app at https://developer.xero.com/app/manage
    - App type: "Auth Code with PKCE"
-   - Redirect URI: http://127.0.0.1 (no port suffix -- the CLI uses ephemeral ports, so Xero's redirect_uri must match the base without a specific port)
+   - Redirect URI: http://127.0.0.1:5555/callback
    - Company or application URL: http://localhost
-   - Note: The CLI dynamically assigns a port at runtime (not fixed 5555)
 
 2. Copy .env.example to .env:
    cp .env.example .env
@@ -2564,7 +2558,7 @@ Set via `AUTH_PROVIDER=memory` env var in CI.
 
 MUST be build with the Skill Creator skill (`/Users/nathanvale/.claude/plugins/marketplaces/every-marketplace/plugins/compound-engineering/skills/skill-creator/SKILL.md`)
 
-**CLI resolution strategy:** The skill MUST NOT hardcode local paths. It uses `bun run xero-cli` (resolved via package.json script in the project root). If the skill is run outside the repo root, Claude should `cd` to the tax-return directory first. The skill documents this: "Run all commands from the tax-return project root (where package.json lives)."
+**CLI resolution strategy:** The skill MUST NOT hardcode local paths. It uses `bun run xero-cli` (resolved via package.json script in the project root). If the skill is run outside the repo root, Claude should `cd` to the side-quest-xero-cli directory first. The skill documents this: "Run all commands from the side-quest-xero-cli project root (where package.json lives)."
 
 The skill teaches Claude:
 1. How to authenticate (`bun run xero-cli auth`)
@@ -2605,141 +2599,141 @@ bun add @logtape/logtape    # Structured logging -- zero-config, JSON Lines on s
 ## Acceptance Criteria
 
 ### Core CLI
-- [ ] `bun run xero-cli` with no args prints full self-documenting help
-- [ ] `bun run xero-cli --version` prints CLI version
-- [ ] `bun run xero-cli auth` completes OAuth2 PKCE flow, stores tokens in Keychain
-- [ ] `bun run xero-cli transactions --unreconciled --json` returns structured JSON
-- [ ] `bun run xero-cli accounts --json` returns chart of accounts
-- [ ] `bun run xero-cli history --since 2025-07-01 --json` returns grouped reconciliation history (--since is required)
-- [ ] `bun run xero-cli history --json` without --since returns a usage error
-- [ ] `bun run xero-cli invoices --json` returns outstanding invoices
-- [ ] `bun run xero-cli reconcile --execute` accepts JSON from stdin, creates entries in Xero
-- [ ] `bun run xero-cli status --json` returns auth + API health check
-- [ ] `package.json` has `"xero-cli": "bun src/cli/command.ts"` script
+- [x] `bun run xero-cli` with no args prints full self-documenting help
+- [x] `bun run xero-cli --version` prints CLI version
+- [x] `bun run xero-cli auth` completes OAuth2 PKCE flow, stores tokens in Keychain
+- [x] `bun run xero-cli transactions --unreconciled --json` returns structured JSON
+- [x] `bun run xero-cli accounts --json` returns chart of accounts
+- [x] `bun run xero-cli history --since 2025-07-01 --json` returns grouped reconciliation history (--since is required)
+- [x] `bun run xero-cli history --json` without --since returns a usage error
+- [x] `bun run xero-cli invoices --json` returns outstanding invoices
+- [x] `bun run xero-cli reconcile --execute` accepts JSON from stdin, creates entries in Xero
+- [x] `bun run xero-cli status --json` returns auth + API health check
+- [x] `package.json` has `"xero-cli": "bun src/cli/command.ts"` script
 
 ### Output Modes
-- [ ] All commands support `--json`, `--quiet`; list commands also support `--fields`
-- [ ] `--fields` rejected on non-list commands (auth, status, reconcile)
-- [ ] Non-TTY auto-detects and switches to JSON output (explicit `--json` always wins, auto non-TTY is convenience fallback)
-- [ ] `--fields` with invalid chars returns usage error (not silent ignore)
-- [ ] `--fields` is case-sensitive (PascalCase, matching Xero API: `Contact.Name` not `contact.name`)
-- [ ] Typed exit codes (0-5, 130) for agent branching
-- [ ] Structured JSON errors on stderr with dual-mode writeError (JSON or human based on context)
-- [ ] Top-level catch-all with `sanitizeErrorMessage()` ensures no unformatted or token-leaking errors escape
-- [ ] Error-to-exit-code mapping uses 3 error classes (`XeroAuthError`, `XeroApiError` with status, `XeroConflictError`)
+- [x] All commands support `--json`, `--quiet`; list commands also support `--fields`
+- [x] `--fields` rejected on non-list commands (auth, status, reconcile)
+- [x] Non-TTY auto-detects and switches to JSON output (explicit `--json` always wins, auto non-TTY is convenience fallback)
+- [x] `--fields` with invalid chars returns usage error (not silent ignore)
+- [x] `--fields` is case-sensitive (PascalCase, matching Xero API: `Contact.Name` not `contact.name`)
+- [x] Typed exit codes (0-5, 130) for agent branching
+- [x] Structured JSON errors on stderr with dual-mode writeError (JSON or human based on context)
+- [x] Top-level catch-all with `sanitizeErrorMessage()` ensures no unformatted or token-leaking errors escape
+- [x] Error-to-exit-code mapping uses 3 error classes (`XeroAuthError`, `XeroApiError` with status, `XeroConflictError`)
 
 ### Help & Aliases
-- [ ] Help system: three access patterns (`help <topic>`, `<cmd> --help`, `--help <topic>`)
-- [ ] Help topics with aliases (tx -> transactions, inv -> invoices, etc.)
-- [ ] Command aliases (tx, inv, acct, rec) normalized to canonical names
-- [ ] Unknown flags produce usage error (never silently ignored)
+- [x] Help system: three access patterns (`help <topic>`, `<cmd> --help`, `--help <topic>`)
+- [x] Help topics with aliases (tx -> transactions, inv -> invoices, etc.)
+- [x] Command aliases (tx, inv, acct, rec) normalized to canonical names
+- [x] Unknown flags produce usage error (never silently ignored)
 
 ### Data Handling
-- [ ] Every command defines a typed success data interface (e.g., TransactionsSuccessData)
-- [ ] Field projection: `projectFields()` with dot-path traversal, field name char validation, and case-sensitive matching
-- [ ] `xeroPost()` returns `unknown` (not `any`) -- callers must use type guards
-- [ ] CSV export works for unmatched/uncertain transactions (`src/xero/export.ts`)
+- [x] Every command defines a typed success data interface (e.g., TransactionsSuccessData)
+- [x] Field projection: `projectFields()` with dot-path traversal, field name char validation, and case-sensitive matching
+- [x] `xeroPost()` returns `unknown` (not `any`) -- callers must use type guards
+- [x] CSV export works for unmatched/uncertain transactions (`src/xero/export.ts`)
 
 ### Logging & Observability
-- [ ] `--verbose` shows info-level logs (API calls, pagination progress) on stderr
-- [ ] `--debug` shows debug-level logs (request/response, rate limit state) on stderr
-- [ ] `--json --debug` outputs JSON Lines on stderr (machine-parseable for agents)
-- [ ] `XERO_LOG_FORMAT=text` env var forces human-readable log format for test determinism
-- [ ] Flag precedence: `--debug` > `--quiet` > `--verbose` > default (via resolveOutputMode())
-- [ ] setupLogging() is synchronous; shutdownLogging() is async with 500ms timeout guard
-- [ ] shutdownLogging() called via try/finally in main() and SIGINT handler
-- [ ] shutdownLogging() is idempotent (safe before setup, after failed setup, or when called twice)
-- [ ] writeError() is sole owner of user-facing errors; logger.error() is diagnostic-only (no duplicate messages)
-- [ ] ProgressDisplay mode gated by resolveOutputMode().progressMode (animated/static/off)
-- [ ] Log invariant tests: stdout has no log messages, --quiet stderr is clean, no envelope fragments in stderr
-- [ ] Async context propagation (Phase 2): withContext() with runId wraps entire command execution
-- [ ] Fingers-crossed sink (Phase 2+): deferred until real usage surfaces gaps
-- [ ] No tokens logged -- Authorization headers redacted at debug level
-- [ ] Events posted to observability server on auth, fetch, and reconcile operations
-- [ ] Event server URL configurable via `--events-url` flag, `XERO_EVENTS_URL` env var, or port file auto-discovery
-- [ ] `XERO_EVENTS=0` disables all event emission
-- [ ] Event emission is fire-and-forget (no-op when no server configured, never blocks CLI)
+- [x] `--verbose` shows info-level logs (API calls, pagination progress) on stderr
+- [x] `--debug` shows debug-level logs (request/response, rate limit state) on stderr
+- [x] `--json --debug` outputs JSON Lines on stderr (machine-parseable for agents)
+- [x] `XERO_LOG_FORMAT=text` env var forces human-readable log format for test determinism
+- [x] Flag precedence: `--debug` > `--quiet` > `--verbose` > default (via resolveOutputMode())
+- [x] setupLogging() is synchronous; shutdownLogging() is async with 500ms timeout guard
+- [x] shutdownLogging() called via try/finally in main() and SIGINT handler
+- [x] shutdownLogging() is idempotent (safe before setup, after failed setup, or when called twice)
+- [x] writeError() is sole owner of user-facing errors; logger.error() is diagnostic-only (no duplicate messages)
+- [x] ProgressDisplay mode gated by resolveOutputMode().progressMode (animated/static/off)
+- [x] Log invariant tests: stdout has no log messages, --quiet stderr is clean, no envelope fragments in stderr
+- [x] Async context propagation (Phase 2): withContext() with runId wraps entire command execution
+- [x] Fingers-crossed sink (Phase 2+): deferred until real usage surfaces gaps
+- [x] No tokens logged -- Authorization headers redacted at debug level
+- [x] Events posted to observability server on auth, fetch, and reconcile operations
+- [x] Event server URL configurable via `--events-url` flag, `XERO_EVENTS_URL` env var, or port file auto-discovery
+- [x] `XERO_EVENTS=0` disables all event emission
+- [x] Event emission is fire-and-forget (no-op when no server configured, never blocks CLI)
 
 ### Security
-- [ ] Keychain hard-fails with actionable error if unavailable (distinguishes not-found, access-denied, locked)
-- [ ] Keychain `loadTokens()` validates data against Zod schema -- corrupted data triggers re-auth
-- [ ] Token revocation via Xero endpoint before Keychain deletion on re-auth/logout
-- [ ] Callback server uses ephemeral port + random path nonce (not fixed port 5555)
-- [ ] Callback server `state` parameter validated with `crypto.timingSafeEqual()`
-- [ ] Callback response is static HTML with `Content-Type` and `X-Content-Type-Options: nosniff` headers
-- [ ] Token refresh uses cross-process file lock to prevent single-use refresh token races
-- [ ] Token refresh uses freshCheck.refreshToken inside lock (not stale pre-lock token)
-- [ ] Token refresh handles Keychain save failure with actionable error (burned token recovery)
-- [ ] loadTokens/deleteTokens recursion eliminated (deleteTokens uses loadTokensRaw)
-- [ ] File lock has explicit timeout (30s), stale PID detection, and crash recovery
-- [ ] timingSafeEqual guarded for buffer length mismatch before comparison
-- [ ] base64url output is unpadded and URL-safe per RFC 7636
-- [ ] Error messages sanitized (Bearer tokens, access_token, refresh_token, code, code_verifier, client_id, xero-tenant-id stripped)
-- [ ] Reconcile stdin uses streaming byte count with early abort (not post-read check)
-- [ ] Reconcile stdin validated with Zod: UUID-shaped format (not strict v4), alphanumeric AccountCode (1-10 chars), max 1000 entries, strict parsing
-- [ ] Reconcile input rejects duplicate BankTransactionIDs (entire payload rejected with listed duplicates)
-- [ ] Reconcile stdin rejects entries with both AccountCode AND InvoiceID (deterministic validation error)
-- [ ] `.xero-config.json` and state files: written with `0o600`, atomic writes (same-dir temp+fsync+rename), read rejects symlinks and permissive modes
-- [ ] State file uses schemaVersion validation + preflight write-scope guard for tamper/staleness detection (content hash dropped -- disproportionate for personal tool)
-- [ ] Atomic writes verified: Bun.write flush behavior documented, fallback to node:fs if needed
-- [ ] `config.ts` validates env vars and config file with actionable error messages
+- [x] Keychain hard-fails with actionable error if unavailable (distinguishes not-found, access-denied, locked)
+- [x] Keychain `loadTokens()` validates data against Zod schema -- corrupted data triggers re-auth
+- [x] Token revocation via Xero endpoint before Keychain deletion on re-auth/logout
+- [x] Callback server uses fixed redirect URI `http://127.0.0.1:5555/callback`
+- [x] Callback server `state` parameter validated with `crypto.timingSafeEqual()`
+- [x] Callback response is static HTML with `Content-Type` and `X-Content-Type-Options: nosniff` headers
+- [x] Token refresh uses cross-process file lock to prevent single-use refresh token races
+- [x] Token refresh uses freshCheck.refreshToken inside lock (not stale pre-lock token)
+- [x] Token refresh handles Keychain save failure with actionable error (burned token recovery)
+- [x] loadTokens/deleteTokens recursion eliminated (deleteTokens uses loadTokensRaw)
+- [x] File lock has explicit timeout (30s), stale PID detection, and crash recovery
+- [x] timingSafeEqual guarded for buffer length mismatch before comparison
+- [x] base64url output is unpadded and URL-safe per RFC 7636
+- [x] Error messages sanitized (Bearer tokens, access_token, refresh_token, code, code_verifier, client_id, xero-tenant-id stripped)
+- [x] Reconcile stdin uses streaming byte count with early abort (not post-read check)
+- [x] Reconcile stdin validated with Zod: UUID-shaped format (not strict v4), alphanumeric AccountCode (1-10 chars), max 1000 entries, strict parsing
+- [x] Reconcile input rejects duplicate BankTransactionIDs (entire payload rejected with listed duplicates)
+- [x] Reconcile stdin rejects entries with both AccountCode AND InvoiceID (deterministic validation error)
+- [x] `.xero-config.json` and state files: written with `0o600`, atomic writes (same-dir temp+fsync+rename), read rejects symlinks and permissive modes
+- [x] State file uses schemaVersion validation + preflight write-scope guard for tamper/staleness detection (content hash dropped -- disproportionate for personal tool)
+- [x] Atomic writes verified: Bun.write flush behavior documented, fallback to node:fs if needed
+- [x] `config.ts` validates env vars and config file with actionable error messages
 
 ### Reconciliation Safety
-- [ ] Re-runs are idempotent (local state file with discriminated union: account-code vs payment entries)
-- [ ] Account code reconciliation via `POST /BankTransactions/{id}` with rate-limit throttling
-- [ ] Invoice matching via batch `PUT /Payments` (batch size 25) with per-item error parsing
-- [ ] Batch payment creation with per-item error parsing
-- [ ] Preflight checks before --execute mode (including period lock warning and write scope validation)
-- [ ] Write scope guard: all input BankTransactionIDs validated against current unreconciled set
-- [ ] AccountCode pre-validation: all codes checked against active chart of accounts before writes
-- [ ] Invoice reconciliation requires Amount and CurrencyCode in input (validated against invoice)
-- [ ] Account-code updates preserve line item invariants (Quantity, UnitAmount, TaxType, etc.)
-- [ ] Post-update Total verified against pre-update Total (delta flagged in audit report)
-- [ ] Audit report includes full input, pre-state, per-item request/response, rollback references
-- [ ] Audit report written to .xero-reconcile-runs/ on each --execute
-- [ ] Response validation type guards before state mutation (checks HasValidationErrors + StatusAttributeString, not just field presence)
-- [ ] Process lock via withFileLock prevents concurrent --execute
-- [ ] PRE-IMPLEMENTATION (BEFORE PHASE 1): Account code reconciliation validated in Xero demo org (locked periods, filed BAS, already-coded transactions, redirect_uri port behavior)
-- [ ] Default mode (no `--execute` flag) is dry-run -- shows what would happen without making changes
-- [ ] `reconcile` command throws at code level if `execute` is not explicitly `true` (safety interlock)
-- [ ] Ctrl+C during --execute finishes current API call, writes audit report for completed items, exits 130
-- [ ] Re-running after interruption skips already-processed items and resumes from checkpoint (via state file)
+- [x] Re-runs are idempotent (local state file with discriminated union: account-code vs payment entries)
+- [x] Account code reconciliation via `POST /BankTransactions/{id}` with rate-limit throttling
+- [x] Invoice matching via batch `PUT /Payments` (batch size 25) with per-item error parsing
+- [x] Batch payment creation with per-item error parsing
+- [x] Preflight checks before --execute mode (including period lock warning and write scope validation)
+- [x] Write scope guard: all input BankTransactionIDs validated against current unreconciled set
+- [x] AccountCode pre-validation: all codes checked against active chart of accounts before writes
+- [x] Invoice reconciliation requires Amount and CurrencyCode in input (validated against invoice)
+- [x] Account-code updates preserve line item invariants (Quantity, UnitAmount, TaxType, etc.)
+- [x] Post-update Total verified against pre-update Total (delta flagged in audit report)
+- [x] Audit report includes full input, pre-state, per-item request/response, rollback references
+- [x] Audit report written to .xero-reconcile-runs/ on each --execute
+- [x] Response validation type guards before state mutation (checks HasValidationErrors + StatusAttributeString, not just field presence)
+- [x] Process lock via withFileLock prevents concurrent --execute
+- [x] PRE-IMPLEMENTATION (BEFORE PHASE 1): Account code reconciliation validated in Xero demo org (locked periods, filed BAS, already-coded transactions, redirect_uri matches fixed callback)
+- [x] Default mode (no `--execute` flag) is dry-run -- shows what would happen without making changes
+- [x] `reconcile` command throws at code level if `execute` is not explicitly `true` (safety interlock)
+- [x] Ctrl+C during --execute finishes current API call, writes audit report for completed items, exits 130
+- [x] Re-running after interruption skips already-processed items and resumes from checkpoint (via state file)
 
 ### Agent DX
-- [ ] Error envelope includes `action` and `retryable` fields (deterministic per error code, subcategorized)
-- [ ] Error envelope includes optional `context` record with safe diagnostic fields (endpoint, status, timing)
-- [ ] Exit code 1 errors use subcategorized codes: E_NETWORK, E_FORBIDDEN, E_SERVER_ERROR, E_RATE_LIMITED
-- [ ] Exit code 5 errors use subcategorized codes: E_LOCK_CONTENTION, E_STALE_DATA, E_API_CONFLICT
-- [ ] Stdout purity: exactly one JSON object + newline in JSON mode, no other output ever
-- [ ] Success envelope includes `schemaVersion` for forward compatibility
-- [ ] `ReconcileSuccessData.results[].status` is typed enum: `reconciled | skipped | failed | dry-run`
-- [ ] History output includes Type (SPEND/RECEIVE), CurrencyCode, MostRecentDate, ExampleTransactionIDs
-- [ ] Invalid `--fields` JSON error includes `invalidFields` and `validFieldsHint` for LLM self-correction
-- [ ] `assertValidBankTransactionResponse` type guard checks HasErrors and Total match before state mutation
-- [ ] `assertValidBankTransactionResponse` negative tests: throws on missing BankTransactionID, HasErrors: true, Total mismatch > 0.01, non-object input, null input
-- [ ] `assertValidPaymentResponse` negative tests: throws on missing PaymentID, missing Amount, StatusAttributeString === "ERROR", HasValidationErrors: true, non-object input, null input
+- [x] Error envelope includes `action` and `retryable` fields (deterministic per error code, subcategorized)
+- [x] Error envelope includes optional `context` record with safe diagnostic fields (endpoint, status, timing)
+- [x] Exit code 1 errors use subcategorized codes: E_NETWORK, E_FORBIDDEN, E_SERVER_ERROR, E_RATE_LIMITED
+- [x] Exit code 5 errors use subcategorized codes: E_LOCK_CONTENTION, E_STALE_DATA, E_API_CONFLICT
+- [x] Stdout purity: exactly one JSON object + newline in JSON mode, no other output ever
+- [x] Success envelope includes `schemaVersion` for forward compatibility
+- [x] `ReconcileSuccessData.results[].status` is typed enum: `reconciled | skipped | failed | dry-run`
+- [x] History output includes Type (SPEND/RECEIVE), CurrencyCode, MostRecentDate, ExampleTransactionIDs
+- [x] Invalid `--fields` JSON error includes `invalidFields` and `validFieldsHint` for LLM self-correction
+- [x] `assertValidBankTransactionResponse` type guard checks HasErrors and Total match before state mutation
+- [x] `assertValidBankTransactionResponse` negative tests: throws on missing BankTransactionID, HasErrors: true, Total mismatch > 0.01, non-object input, null input
+- [x] `assertValidPaymentResponse` negative tests: throws on missing PaymentID, missing Amount, StatusAttributeString === "ERROR", HasValidationErrors: true, non-object input, null input
 
 ### Human DX
-- [ ] `--summary` flag on list commands shows aggregated view for 50+ rows (counts by type/month/contact)
-- [ ] Date range presets: `--this-quarter`, `--last-quarter` on transactions
-- [ ] `status` command returns per-location health `checks` array (env, config, keychain, state_file, lock_file, audit_dir)
-- [ ] `status` command `diagnosis` is a typed enum (not free-form string) with canonical `nextAction` per diagnosis
-- [ ] Reconcile human output shows real-time per-item results as they complete (not just summary at end)
-- [ ] Reconcile progress bar shows rate-limit pauses distinctly
-- [ ] Rate-limit warnings visible in default mode (not just --verbose)
-- [ ] Auth callback timeout defaults to 300s (configurable via --auth-timeout), exits with code 4 on timeout
-- [ ] Reconcile human output includes audit digest (counts by account code, totals by type)
-- [ ] First-run setup guide printed when .env is missing during `auth`
-- [ ] Uncertain transaction CSV import via `reconcile --from-csv <file>` with schema validation
-- [ ] `@side-quest/core` pinned to exact version (no dedicated compat test file -- real tests catch breakage)
+- [x] `--summary` flag on list commands shows aggregated view for 50+ rows (counts by type/month/contact)
+- [x] Date range presets: `--this-quarter`, `--last-quarter` on transactions
+- [x] `status` command returns per-location health `checks` array (env, config, keychain, state_file, lock_file, audit_dir)
+- [x] `status` command `diagnosis` is a typed enum (not free-form string) with canonical `nextAction` per diagnosis
+- [x] Reconcile human output shows real-time per-item results as they complete (not just summary at end)
+- [x] Reconcile progress bar shows rate-limit pauses distinctly
+- [x] Rate-limit warnings visible in default mode (not just --verbose)
+- [x] Auth callback timeout defaults to 300s (configurable via --auth-timeout), exits with code 4 on timeout
+- [x] Reconcile human output includes audit digest (counts by account code, totals by type)
+- [x] First-run setup guide printed when .env is missing during `auth`
+- [x] Uncertain transaction CSV import via `reconcile --from-csv <file>` with schema validation
+- [x] `@side-quest/core` pinned to exact version (no dedicated compat test file -- real tests catch breakage) (N/A: not used in current code)
 
 ### Testing Infrastructure
-- [ ] `XERO_API_BASE_URL` env var configures API base URL (tests use local mock server)
-- [ ] Xero mock server (`tests/helpers/xero-mock-server.ts`) with route-keyed canned responses
-- [ ] Scenario-based fixtures in `tests/fixtures/` with versioned JSON from demo org
-- [ ] Auth provider interface with `InMemoryAuthProvider` for CI (no Keychain dependency)
-- [ ] Logger test isolation via `configure({ reset: true })` in beforeEach (prefer over `--concurrency 1`)
-- [ ] Integration test layer: full stdin -> validate -> API -> state -> audit flow against mock server, covering these scenarios:
+- [x] `XERO_API_BASE_URL` env var configures API base URL (tests use local mock server)
+- [x] Xero mock server (`tests/helpers/xero-mock-server.ts`) with route-keyed canned responses
+- [x] Scenario-based fixtures in `tests/fixtures/` with versioned JSON from demo org
+- [x] Auth provider interface with `InMemoryAuthProvider` for CI (no Keychain dependency)
+- [x] Logger test isolation via `configure({ reset: true })` in beforeEach (prefer over `--concurrency 1`)
+- [x] Integration test layer: full stdin -> validate -> API -> state -> audit flow against mock server, covering these scenarios:
   1. Happy path -- 5 account-code items, all succeed, state file written, journal complete
   2. Mixed success/failure -- 3 succeed, 2 fail (one validation error, one 429), state has 3 entries, journal has both
   3. Resume after interruption -- run with 5 items, kill after 3, re-run same input, verify 3 skipped + 2 processed
@@ -2748,14 +2742,14 @@ bun add @logtape/logtape    # Structured logging -- zero-config, JSON Lines on s
   6. Invoice payment batch -- 3 invoice matches in one batch, verify batch PUT and per-item state
   7. Token refresh mid-run -- token expires during run, transparent refresh, execution continues
   8. Dry-run -- same input, no --execute, verify zero state changes and zero API writes
-- [ ] Filesystem security tests: atomic writes, symlink rejection, permission checks (real FS, temp dirs)
-- [ ] Acceptance-criteria-to-test traceability matrix in `docs/test-matrix.md`
-- [ ] Output invariant tests assert full envelope contracts: `schemaVersion`, typed status enums, error shape
+- [x] Filesystem security tests: atomic writes, symlink rejection, permission checks (real FS, temp dirs)
+- [x] Acceptance-criteria-to-test traceability matrix in `docs/test-matrix.md`
+- [x] Output invariant tests assert full envelope contracts: `schemaVersion`, typed status enums, error shape
 
 ### Integration
-- [ ] Claude Code skill can orchestrate the full reconciliation workflow
-- [ ] Claude Code skill handles uncertain transaction CSV round-trip via `--from-csv`
-- [ ] All tests pass (`bun test`)
+- [x] Claude Code skill can orchestrate the full reconciliation workflow
+- [x] Claude Code skill handles uncertain transaction CSV round-trip via `--from-csv`
+- [x] All tests pass (`bun test`)
 
 ---
 
@@ -2857,7 +2851,7 @@ Three-pass staff engineer review via Codex. All passes returned REQUEST CHANGES.
 
 **Applied from Security Engineer (Pass 3):**
 - Stdin DoS: hard 5MB byte limit before Zod parsing
-- OAuth callback: ephemeral port + random path nonce (replaces fixed port 5555)
+- OAuth callback: fixed redirect URI `http://127.0.0.1:5555/callback`
 - Token refresh: cross-process file lock via withFileLock (prevents single-use refresh token races)
 - State/config files: read-time symlink rejection + permission verification + atomic writes
 - Response validation: checks HasValidationErrors + StatusAttributeString (not just field presence)

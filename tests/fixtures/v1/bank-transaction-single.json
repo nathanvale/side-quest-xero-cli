@@ -1,0 +1,11 @@
+{
+	"BankTransactions": [
+		{
+			"BankTransactionID": "11111111-1111-1111-1111-111111111111",
+			"Type": "SPEND",
+			"Total": 10.0,
+			"BankAccount": { "AccountID": "bank-1" },
+			"LineItems": []
+		}
+	]
+}
