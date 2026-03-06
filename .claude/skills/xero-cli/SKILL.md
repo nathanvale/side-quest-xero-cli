@@ -119,6 +119,12 @@ Tokens are missing or expired. Run auth.
 **Running auth:**
 Tell the user to run `bun run xero-cli auth` in their terminal (it opens a browser for OAuth2 and requires human interaction -- do NOT run it via Bash tool). Once they confirm auth is complete, verify with `bun run xero-cli status --json` and continue the workflow.
 
+**Auth resilience notes:**
+- Config resolution is cwd-dependent (`process.cwd()`) - always run xero-cli from the project root where `.xero-config.json` lives
+- Re-verify `status --json` before starting reconcile batches, not just at session start
+- If config disappears mid-session, tokens persist in macOS Keychain - only the config file needs re-creation via `auth`
+- Confirm auth actually completed by checking `status --json` shows `diagnosis: "ok"` with the `api` check passing (not just config/keychain checks)
+
 **Fallback:** If `error.context.checks` is absent (older CLI version), use `--debug` for detailed stderr output showing individual check results.
 
 ### BankTransactionID Immutability
@@ -155,15 +161,39 @@ Bank descriptions are inconsistent (e.g., "GITHUB INC" vs "GITHUB.COM" vs "GH *G
 - Case-insensitive comparison
 - If match confidence is low, present to user for review rather than assuming
 
+### Reconciliation Pipeline
+
+Statement Lines (Finance API) and Bank Transactions (Accounting API) are **different resources**. The xero-cli `reconcile` command operates on **Bank Transactions** from the Accounting API. Do not confuse these.
+
+**End-to-end pipeline:**
+
+1. **Preflight** - `status --json` - confirm auth, config, API connectivity
+2. **Load accounts** - `accounts --json --fields Code,Name,Type` - chart of accounts for categorization
+3. **Load history** - `history --since YYYY-MM-DD --json --fields Contact,AccountCode,Count,AmountMin,AmountMax` - past reconciliation patterns
+4. **Fetch unreconciled** - `transactions --unreconciled --json --fields BankTransactionID,Total,Contact.Name,Date,Type --limit 50` - the items to reconcile
+5. **Match** - use history patterns to assign AccountCode to each BankTransactionID
+6. **Reconcile** - pipe `[{"BankTransactionID":"...","AccountCode":"..."}]` into `reconcile --dry-run --json` first, then `--execute`
+
+**Critical rules:**
+- `reconcile` input MUST use `BankTransactionID` from the `transactions` command output (Accounting API UUIDs)
+- Do NOT use statement line IDs, invoice line IDs, or any other identifier
+- Do NOT add `TaxType` to reconcile input - the CLI derives it internally from the transaction type
+- For account-code reconciliation, only `BankTransactionID` and `AccountCode` columns are needed
+
+**Common mistakes:**
+- Using Finance API statement line IDs instead of Accounting API BankTransactionIDs
+- Adding TaxType to the reconcile payload (causes validation errors or wrong tax treatment)
+- Including extra CSV columns that the CLI does not expect
+
 ### Token Budget
 
 Never load all transactions + full history + full accounts into a single prompt. Use progressive loading:
 
-1. Load accounts once (~2K tokens via `--fields Code,Name,Type`)
-2. Load history grouped (~4K tokens via `--fields Contact,AccountCode,Count,AmountMin,AmountMax`)
-3. Load transactions in chunks of 50 (~5K tokens per chunk via `--fields`)
-4. Analyze and propose per chunk
-5. Accumulate proposals
-6. Present summary to user
+1. `accounts --json --fields Code,Name,Type` (~2K tokens)
+2. `history --since YYYY-MM-DD --json --fields Contact,AccountCode,Count,AmountMin,AmountMax` (~4K tokens)
+3. `transactions --unreconciled --json --fields BankTransactionID,Total,Contact.Name,Date,Type --limit 50` (~5K tokens per chunk)
+4. Match each chunk against history patterns, assign AccountCode per BankTransactionID
+5. Accumulate proposals across chunks
+6. Present summary to user, then `reconcile --dry-run --json`, then `--execute`
 
 Target: <20K tokens per analysis step.

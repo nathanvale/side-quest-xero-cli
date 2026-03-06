@@ -178,3 +178,54 @@ Available on all list commands: `accounts`, `transactions`, `history`, `invoices
 | `inv` | `invoices` |
 | `rec` | `reconcile` |
 | `hist` | `history` |
+
+## Reconciliation Pipeline Example
+
+Complete command chain from preflight through execute:
+
+```bash
+# Step 1: Preflight -- confirm auth and API connectivity
+bun run xero-cli status --json
+# -> data.diagnosis: "ok", data.checks[].status all "ok"
+
+# Step 2: Load chart of accounts (for categorization reference)
+bun run xero-cli accounts --json --fields Code,Name,Type
+# -> data.items[]: { Code, Name, Type }
+
+# Step 3: Load reconciliation history (past patterns)
+bun run xero-cli history --since 2025-07-01 --json --fields Contact,AccountCode,Count,AmountMin,AmountMax
+# -> data.items[]: { Contact, AccountCode, Count, AmountMin, AmountMax }
+
+# Step 4: Fetch unreconciled bank transactions (Accounting API)
+bun run xero-cli transactions --unreconciled --json --fields BankTransactionID,Total,Contact.Name,Date,Type --limit 50
+# -> data.items[]: { BankTransactionID, Total, Contact: { Name }, Date, Type }
+# NOTE: BankTransactionID is the key -- carry it unchanged into reconcile input
+
+# Step 5: Match and build proposal (agent logic)
+# Use history patterns to assign AccountCode to each BankTransactionID
+
+# Step 6a: Dry-run validation
+echo '[
+  { "BankTransactionID": "abc-123", "AccountCode": "400" },
+  { "BankTransactionID": "def-456", "AccountCode": "461" }
+]' | bun run xero-cli reconcile --dry-run --json
+# -> Validates input without writing to Xero
+
+# Step 6b: Execute
+echo '[...]' | bun run xero-cli reconcile --execute --json
+# -> Writes to Xero, returns results with status per item
+```
+
+**Data flow:** `transactions` output provides `BankTransactionID` -> agent matches with `history` patterns -> assigns `AccountCode` -> pipes into `reconcile`. The `BankTransactionID` must flow unchanged from step 4 through step 6.
+
+## CSV Clarification
+
+For account-code reconciliation (the common case), only two CSV columns are needed:
+
+```csv
+BankTransactionID,AccountCode
+abc-123,400
+def-456,461
+```
+
+`TaxType` is **not** a valid CSV column - the CLI derives tax type internally from the transaction type. Adding it will cause unexpected behavior. The full CSV column list (`InvoiceID`, `Amount`, `CurrencyCode`) is only needed for invoice-matching reconciliation.
