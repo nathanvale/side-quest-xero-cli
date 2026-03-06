@@ -24,7 +24,8 @@ These hooks are installed at user scope so they apply across repos.
 
 ## Prompt Controls
 
-- `MISSION: <goal>` sets/updates active mission
+- `MISSION` (bare) shows numbered mission options to pick from
+- `MISSION: <goal>` sets/updates active mission directly
 - `focus: low|normal|deep` sets focus level
 - `SWITCH_MISSION` allows deliberate cross-repo mission switch
 - `PAUSE_MISSION` pauses mission
