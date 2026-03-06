@@ -321,6 +321,7 @@ export async function runStatus(ctx: OutputContext): Promise<ExitCode> {
 			{
 				diagnosis,
 				nextAction,
+				checks,
 			},
 		)
 	} else {

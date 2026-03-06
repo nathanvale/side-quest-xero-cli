@@ -103,7 +103,23 @@ These rules apply to ALL workflows that use xero-cli.
 
 ### Auth Prerequisite
 
-If `status` reports `invalid-config` with `nextAction: FIX_CONFIG`, or `.xero-config.json` does not exist, auth is the mandatory next step. Do NOT ask the user whether to authenticate -- there is no alternative path. Tell the user to run `bun run xero-cli auth` in their terminal (it opens a browser for OAuth2 and requires human interaction -- do NOT run it via Bash tool). Once they confirm auth is complete, verify with `bun run xero-cli status` and continue the workflow.
+Run `bun run xero-cli status --json` before any Xero workflow. On failure, inspect `error.context.checks` to determine the exact issue:
+
+**When diagnosis is `invalid-config` / `FIX_CONFIG`:**
+
+| Check that failed | Fix |
+|-------------------|-----|
+| `env` check has `status: "error"` | `.env` is missing `XERO_CLIENT_ID`. Tell the user to add it. Auth cannot fix this. |
+| `config` check has `status: "warning"` or `"error"` | `.xero-config.json` is missing or corrupt. Auth creates this file. |
+| Both `env` and `config` failed | Fix `.env` first, then run auth. Auth requires `XERO_CLIENT_ID` to work. |
+
+**When diagnosis is `needs-auth` / `RUN_AUTH`:**
+Tokens are missing or expired. Run auth.
+
+**Running auth:**
+Tell the user to run `bun run xero-cli auth` in their terminal (it opens a browser for OAuth2 and requires human interaction -- do NOT run it via Bash tool). Once they confirm auth is complete, verify with `bun run xero-cli status --json` and continue the workflow.
+
+**Fallback:** If `error.context.checks` is absent (older CLI version), use `--debug` for detailed stderr output showing individual check results.
 
 ### BankTransactionID Immutability
 

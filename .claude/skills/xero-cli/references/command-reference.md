@@ -24,7 +24,34 @@ Preflight check for env, config, keychain, state file, lock file, audit dir, and
 bun run xero-cli status --json
 ```
 
-Returns `diagnosis` field: `ok`, `needs-auth`, `invalid-config`, `api-error`, `keychain-locked`, `keychain-denied`, `fs-error`. Also returns a `nextAction` hint.
+**Success:** `data.checks` array + `data.diagnosis: "ok"`.
+**Error:** `error.context.checks` array + `error.context.diagnosis` + `error.context.nextAction`.
+
+**Diagnosis values:**
+
+| Diagnosis | nextAction | Meaning |
+|-----------|-----------|---------|
+| `ok` | `NONE` | All checks passed |
+| `invalid-config` | `FIX_CONFIG` | Env var or config file issue (inspect `checks` to distinguish) |
+| `needs-auth` | `RUN_AUTH` | Tokens missing or expired |
+| `keychain-locked` | `UNLOCK_KEYCHAIN` | macOS Keychain locked |
+| `keychain-denied` | `ALLOW_KEYCHAIN` | Keychain access denied |
+| `api-error` | `RETRY` | Xero API unreachable |
+| `fs-error` | `CHECK_FS` | State/lock/audit file error |
+
+**Individual checks** (in `checks` array):
+
+| Check | Validates |
+|-------|----------|
+| `env` | `XERO_CLIENT_ID` in `.env` |
+| `config` | `.xero-config.json` exists and valid |
+| `keychain` | OAuth tokens in macOS Keychain |
+| `state_file` | Reconciliation state file integrity |
+| `lock_file` | No stale lock |
+| `audit_dir` | Audit directory exists |
+| `api` | Xero Organisation API reachable |
+
+Each check has `status` (`ok` | `warning` | `error`) and optional `message`.
 
 ### auth
 
