@@ -78,6 +78,12 @@ export STATE_FILE="$(python3 scripts/manage-quarters.py statefile "$Q" "$FY")"
 echo "Target quarter: Q{N} FY{YY}"
 echo "Statement lines file: $SL_FILE"
 echo "State file: $STATE_FILE"
+
+# Fail fast if statement lines file is missing
+if [ ! -f "$SL_FILE" ]; then
+  echo "ERROR: $SL_FILE not found. Run /xero-explorer extract for this quarter first."
+  exit 1
+fi
 ```
 Never execute placeholder literals (`Q`, `FY`) directly.
 
@@ -353,6 +359,10 @@ Approve all 42? (yes / except N,N / change code / skip group)
 
 **After each confirmation:** save state immediately (two-point write -- see state-schema.md).
 
+Two-point write: (1) write state immediately after user approval (status -> confirmed),
+(2) write state again after successful POST (status -> posted). This ensures no approved
+item is lost if the session crashes between approval and POST.
+
 ### Undo affordance (before POST starts)
 
 Support an `undo last` command for accidental approvals while still in Phase B:
@@ -463,8 +473,19 @@ Boredom interrupt triggers:
 
 Goal: post all `confirmed` statement lines as BankTransactions to Xero.
 
-# Transport: API Explorer browser
-# Swap to direct API when OAuth unblocks -- GitHub #10
+### Transport selection
+
+The `writeStrategy` field in the state file (see `state-schema.md`) controls how
+confirmed items are written to Xero:
+
+- **`api-explorer-post`** (default) -- POST via the API Explorer browser automation.
+  This is the active path while OAuth PKCE remains blocked (GitHub #10).
+- **`manual-export`** -- fall back to exporting confirmed items as a JSON file for
+  manual upload. Triggered automatically when POST verification fails (for example,
+  repeated 4xx errors or browser session cannot be recovered).
+
+When `writeStrategy` is `manual-export`, skip the POST loop below and jump
+directly to the "Manual export fallback" section.
 
 ### Pre-POST checks
 

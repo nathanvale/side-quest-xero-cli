@@ -2,6 +2,24 @@
 
 Patterns for driving the Xero API Explorer at `api-explorer.xero.com` via `agent-browser`.
 
+## Command Syntax
+
+The `agent-browser` CLI uses these patterns throughout the skill:
+
+```bash
+agent-browser --headed snapshot -i          # Capture page accessibility tree (use -i for concise output)
+agent-browser --headed get url              # Print the current page URL
+agent-browser --headed open "URL"           # Navigate to a URL
+agent-browser --headed click @REF           # Click an element by its snapshot ref
+agent-browser --headed find role button click --name "TEXT"         # Find a button by accessible name and click it
+agent-browser --headed find role button click --name "TEXT" --exact # Same but exact-match only (no substring)
+agent-browser --headed fill @REF "value"    # Set an input field's value (always prefer over `type`)
+agent-browser --headed wait MS              # Pause for MS milliseconds
+agent-browser --headed press "KEY"          # Press a keyboard key (e.g., "ctrl+a", "Enter")
+```
+
+All commands require `--headed` so the user can observe and intervene.
+
 ## Session Setup
 
 ```bash

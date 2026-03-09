@@ -93,6 +93,10 @@ Use `FromDate`/`ToDate` when filling BankStatementsPlus parameters in the extrac
 **Nothing happens without a validated bank export.** Use this single command (source of truth) before extract/reconcile:
 
 ```bash
+# Concrete example (Q4 FY25)
+python3 scripts/manage-quarters.py gate 4 25
+
+# Template -- substitute Q and FY before running
 python3 scripts/manage-quarters.py gate Q FY
 ```
 
@@ -196,7 +200,13 @@ Before starting reconciliation, read:
 - [references/matching-rules.md](references/matching-rules.md) -- categorization rules, contact lookup, POST templates
 - [references/state-schema.md](references/state-schema.md) -- state file lifecycle and write discipline
 
-**Routing:** `extract` -> 1, `pull` -> 1, `reconcile` -> 2, `match` -> 2, `status` -> 3, `progress` -> 3, `quarters` -> 4, `new quarter`/`setup quarter`/`download qif` -> 5, `Q1`/`Q2`/`Q3`/`Q4` -> run Quarter Gate validation first, then ask extract or reconcile
+**Routing:**
+- `extract`/`pull` -> [Extract](workflows/extract.md)
+- `reconcile`/`match` -> [Reconcile](workflows/reconcile.md)
+- `status`/`progress` -> Status Check (below)
+- `quarters` -> Quarter status (below)
+- `new quarter`/`setup quarter`/`download qif` -> [New quarter setup](workflows/new-quarter.md)
+- `Q1`/`Q2`/`Q3`/`Q4` -> run Quarter Gate validation first, then ask extract or reconcile
 
 **Intake logic:**
 - Run `python3 scripts/manage-quarters.py status` to show pipeline overview
@@ -204,6 +214,11 @@ Before starting reconciliation, read:
 - Recommend canonical session bootstrap:
   - `./scripts/xero-explorer-runner.sh 4 25 batch`
   - `./scripts/xero-explorer-runner.sh 4 25 rapid-fire --dry-run`
+  - Usage: `xero-explorer-runner.sh <Q> <FY> <mode> [--dry-run]`
+    - `Q`: quarter number (1-4)
+    - `FY`: two-digit financial year (e.g., 25 for FY25)
+    - `mode`: `batch` | `rapid-fire`
+    - `--dry-run`: classify + preview only, no POST writes
   - Substitute the concrete quarter values before running (never run `Q FY` placeholders literally)
   - Run `./scripts/xero-browser-healthcheck.sh` before long reconcile sessions
 - For extract: ask which quarter (show available from quarters.json)

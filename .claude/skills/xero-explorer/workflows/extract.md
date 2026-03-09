@@ -96,6 +96,10 @@ python3 scripts/xero-env.py get-bank-account-id 2>/dev/null || true
 
 ```bash
 agent-browser --headed get url
+# --expect-api: any | finance | accounting
+#   any: just verify browser is on API Explorer (don't care which API)
+#   finance: verify Finance API is selected
+#   accounting: verify Accounting API is selected
 ./scripts/xero-browser-healthcheck.sh --expect-api any
 ```
 
@@ -278,6 +282,11 @@ If the copied payload is login HTML or non-JSON, treat this as auth expiry:
 ```bash
 python3 scripts/xero-convert.py inspect-envelope "$TMPDIR/xero-bankstatementsplus-raw.json"
 ```
+
+If `inspect-envelope` fails (non-zero exit, invalid JSON, or unrecognized structure):
+1. Save the raw clipboard content to `data/.debug-envelope-raw.json` for inspection
+2. Report the error to the user with the raw structure summary
+3. Do not attempt to convert -- ask user whether to retry extraction or inspect manually
 
 Persist envelope detection so verification is one-time per environment:
 
