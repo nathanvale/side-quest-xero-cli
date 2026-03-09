@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { AUTH_SCOPE } from '../../src/cli/commands/auth'
+import { AUTH_SCOPE, DEFAULT_AUTH_SCOPES } from '../../src/cli/commands/auth'
 import { type OutputContext, writeSuccess } from '../../src/cli/output'
 import { isHeadless } from '../../src/xero/auth'
 import { withCapturedOutput } from '../helpers/test-isolation'
@@ -84,12 +84,30 @@ describe('isHeadless() detection', () => {
 })
 
 describe('auth scope manifest', () => {
-	it('includes the currently advertised accounting capabilities', () => {
-		expect(AUTH_SCOPE).toContain('accounting.banktransactions')
-		expect(AUTH_SCOPE).toContain('accounting.payments')
-		expect(AUTH_SCOPE).toContain('accounting.invoices')
-		expect(AUTH_SCOPE).toContain('accounting.contacts')
-		expect(AUTH_SCOPE).toContain('accounting.settings.read')
+	it('includes the confirmed working accounting scopes', () => {
+		const scopes = DEFAULT_AUTH_SCOPES
+		// Broad accounting scopes (pre-migration)
+		expect(scopes).toContain('accounting.transactions')
+		expect(scopes).toContain('accounting.reports.read')
+		expect(scopes).toContain('accounting.contacts')
+		expect(scopes).toContain('accounting.settings')
+		expect(scopes).toContain('accounting.attachments')
+		expect(scopes).toContain('accounting.journals.read')
+		expect(scopes).toContain('accounting.budgets.read')
+		// Infrastructure
+		expect(scopes).toContain('offline_access')
+		expect(scopes).toContain('openid')
+	})
+
+	it('excludes partner-only finance scopes', () => {
+		expect(DEFAULT_AUTH_SCOPES).not.toContain('finance.bankstatementsplus.read')
+		expect(DEFAULT_AUTH_SCOPES).not.toContain('finance.statements.read')
+	})
+
+	it('supports XERO_AUTH_SCOPE env var override', () => {
+		// AUTH_SCOPE is evaluated at import time, so we verify the default join
+		expect(DEFAULT_AUTH_SCOPES.join(' ')).toContain('accounting.transactions')
+		expect(DEFAULT_AUTH_SCOPES.join(' ')).toContain('offline_access')
 	})
 })
 

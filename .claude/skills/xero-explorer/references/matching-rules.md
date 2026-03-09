@@ -5,6 +5,7 @@ Categorization rules, contact lookup, vendor research, and POST body templates f
 > Canonical rules for `/xero-explorer` as of 2026-03-05.
 
 Changelog:
+- 2026-03-10: added CLI history lookup as primary account code source
 - 2026-03-09: extracted deterministic confidence weights to `confidence-weights.json`
 
 ## Sync Contract
@@ -27,9 +28,66 @@ Bank descriptions are inconsistent (e.g., "GITHUB INC" vs "GITHUB.COM" vs "GH *G
 4. Case-insensitive comparison
 5. If match confidence is low, mark as **Needs input** rather than assuming
 
-## Contact Lookup from Bank Transactions
+## Reconciliation History Lookup (primary source)
 
-Statement lines only have a `payee` field (plain text). Build a contact lookup from historical bank transactions for richer matching:
+The CLI `history` command queries Xero's Accounting API for past reconciled
+transactions grouped by contact. This is the **most reliable source** for
+account codes because it returns the actual codes used in Xero, unlike
+`bank-transactions.ndjson` which often has empty `LineItems`.
+
+### Single contact lookup
+
+```bash
+bun run xero-cli history --since 2024-01-01 --contact "Body Fit Training Sydney" --json
+```
+
+Returns: `AccountCode`, `Count`, `AmountMin`, `AmountMax`, `Type`, `MostRecentDate`.
+
+### Bulk history export (all contacts)
+
+```bash
+bun run xero-cli history --since 2024-01-01 --json
+```
+
+Returns all contacts with reconciliation history. Use this to build a
+comprehensive lookup during Phase A setup.
+
+### Account code lookup by code
+
+```bash
+bun run xero-cli history --since 2024-01-01 --account-code 485 --json
+```
+
+Useful for verifying what else is assigned to a given code.
+
+### Custom fields
+
+```bash
+bun run xero-cli history --since 2024-01-01 --json --fields Contact,AccountCode,Count,AmountMin,AmountMax
+```
+
+### When to use history lookup
+
+- **Phase A setup:** Run bulk history export and cache results for the session
+- **Round 1 classification:** History match = highest confidence signal
+- **Round 2 research:** Check history before WebSearch -- vendor may have been
+  reconciled under a different payee spelling
+- **Dispute resolution:** When unsure about a code, show the user their own
+  history: "You've assigned Body Fit to 485 (Subscriptions) 38 times"
+
+### History cache file
+
+Save bulk history output during Phase A for fast lookups:
+
+```bash
+bun run xero-cli history --since 2024-01-01 --json > data/.xero-history-cache.json
+```
+
+This is a session artifact (not quarter-scoped). Refresh if older than 7 days.
+
+## Contact Lookup from Bank Transactions (secondary source)
+
+Statement lines only have a `payee` field (plain text). Build a contact lookup from historical bank transactions for ContactID matching:
 
 ```bash
 python3 scripts/xero-contact-lookup.py summary data/bank-transactions.ndjson
@@ -39,6 +97,11 @@ python3 scripts/xero-contact-lookup.py build data/bank-transactions.ndjson data/
 The generated lookup file includes:
 - `lookup[normalized_name] -> { ContactID, ContactName, AccountCode, Count, AmountMin, AmountMax, AccountCodeCounts }`
 - `stats` coverage fields so you can detect weak historical data (for example, missing `LineItems.AccountCode`).
+
+**Note:** `bank-transactions.ndjson` often has empty `LineItems` (no account
+codes). Use the CLI `history` command as the primary account code source.
+This lookup is still valuable for **ContactID resolution** (linking to existing
+Xero contacts in POST bodies).
 
 **Match found** = reuse ContactID (Xero links to existing contact).
 **No match** = use `payee` as `Contact.Name` in the POST body (Xero auto-creates the contact).
@@ -61,13 +124,20 @@ Use this scoring model to avoid drift. The machine-readable source of truth is
 `references/confidence-weights.json`.
 
 - Base score starts at `0`
-- `+70` exact normalized payee match in contact lookup
+- `+80` CLI history match (account code confirmed from Xero reconciliation history)
+- `+70` exact normalized payee match in contact lookup (ContactID only, no account code)
 - `+15` amount within historical range (or 20% tolerance)
-- `+10` recurrence count >= 3
-- `+10` stable historical account code
+- `+10` recurrence count >= 3 (from CLI history `Count` field)
+- `+10` stable historical account code (single code in history, no conflicts)
 - `-25` amount anomaly outside tolerance
 - `-20` generic payee tokens (`DIRECT DEBIT`, `TRANSFER`, `PAYMENT`, `CASH`)
 - `-15` no contact history + ambiguous vendor
+
+**Priority of account code sources:**
+
+1. CLI `history` command (highest -- actual reconciled account codes from Xero)
+2. Contact lookup `AccountCodeCounts` (if LineItems were populated)
+3. AI classification / WebSearch research (lowest)
 
 Final banding:
 

@@ -24,14 +24,66 @@ interface AuthSuccessData {
 }
 
 /**
- * Requested scopes for fresh auth.
+ * Default scopes for fresh auth.
  *
- * These reflect the current command surface, including the post-reconcile
- * `payments` read primitive and invoice lookups. Granular scopes keep first-run
- * capability parity aligned with the tools we advertise.
+ * Confirmed working for Starter-tier PKCE apps as of 2026-03-10. Xero
+ * introduced granular scopes on March 2, 2026 but existing apps haven't been
+ * migrated yet -- granular scopes (e.g. accounting.banktransactions) are
+ * rejected until Xero assigns them (expected by end of April 2026).
+ *
+ * Once migrated, replace the broad deprecated scopes with their granular
+ * equivalents (see commented section below).
+ *
+ * Override at runtime: `XERO_AUTH_SCOPE="scope1 scope2" bun run xero-cli auth`
+ *
+ * @see https://developer.xero.com/documentation/guides/oauth2/scopes/
+ */
+export const DEFAULT_AUTH_SCOPES = [
+	// ── OpenID Connect ──────────────────────────────────────────────────
+	'openid', // https://developer.xero.com/documentation/guides/oauth2/scopes/#user-scopes
+	'profile', // first name, last name, xero user id
+	'email', // email address
+
+	// ── Accounting API (broad scopes, deprecated Sep 2027) ──────────────
+	'accounting.transactions', // https://developer.xero.com/documentation/api/accounting/banktransactions
+	'accounting.reports.read', // https://developer.xero.com/documentation/api/accounting/reports
+	'accounting.contacts', // https://developer.xero.com/documentation/api/accounting/contacts
+	'accounting.settings', // https://developer.xero.com/documentation/api/accounting/accounts
+	'accounting.attachments', // https://developer.xero.com/documentation/api/accounting/attachments
+	'accounting.journals.read', // https://developer.xero.com/documentation/api/accounting/journals
+	'accounting.budgets.read', // https://developer.xero.com/documentation/api/budgets
+
+	// ── Token refresh ───────────────────────────────────────────────────
+	'offline_access',
+
+	// ── Granular scopes (enable after Xero migrates this app) ───────────
+	// 'accounting.invoices',              // replaces accounting.transactions (partial)
+	// 'accounting.payments',              // replaces accounting.transactions (partial)
+	// 'accounting.banktransactions',      // replaces accounting.transactions (partial)
+	// 'accounting.manualjournals',        // replaces accounting.transactions (partial)
+	// 'accounting.reports.aged.read',     // replaces accounting.reports.read (partial)
+	// 'accounting.reports.balancesheet.read',
+	// 'accounting.reports.banksummary.read',
+	// 'accounting.reports.budgetsummary.read',
+	// 'accounting.reports.executivesummary.read',
+	// 'accounting.reports.profitandloss.read',
+	// 'accounting.reports.trialbalance.read',
+	// 'accounting.reports.taxreports.read',
+	// 'accounting.reports.tenninetynine.read',
+
+	// ── Partner-only scopes (require Xero partner application) ──────────
+	// 'finance.bankstatementsplus.read',  // use agent-browser workaround instead
+	// 'finance.accountingactivity.read',
+	// 'finance.cashvalidation.read',
+	// 'finance.statements.read',
+]
+
+/**
+ * Resolved auth scope string. Override with XERO_AUTH_SCOPE env var for
+ * testing or to add scopes without code changes.
  */
 export const AUTH_SCOPE =
-	'accounting.banktransactions accounting.payments accounting.invoices accounting.contacts accounting.settings.read offline_access'
+	process.env.XERO_AUTH_SCOPE ?? DEFAULT_AUTH_SCOPES.join(' ')
 
 function printSetupGuide(): void {
 	const lines = [

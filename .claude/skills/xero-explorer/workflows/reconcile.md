@@ -239,6 +239,40 @@ At mission boundary:
 python3 scripts/xero-reconcile-report.py classify-overview "$SL_FILE"
 ```
 
+**Step 5a: Build reconciliation history cache (primary account code source)**
+
+The CLI `history` command returns actual reconciled account codes from Xero - far more reliable than bank-transactions.ndjson (which often has empty LineItems). Build/refresh the cache at session start:
+
+```bash
+# Build history cache (refresh if older than 7 days)
+HISTORY_CACHE="data/.xero-history-cache.json"
+if [ -f "$HISTORY_CACHE" ]; then
+  AGE_DAYS=$(( ($(date +%s) - $(stat -f '%m' "$HISTORY_CACHE")) / 86400 ))
+  echo "History cache exists (${AGE_DAYS}d old)"
+  if [ "$AGE_DAYS" -gt 7 ]; then
+    echo "Cache is stale -- refreshing..."
+    bun run xero-cli history --since 2024-01-01 --json > "$HISTORY_CACHE"
+  fi
+else
+  echo "Building history cache from Xero..."
+  bun run xero-cli history --since 2024-01-01 --json > "$HISTORY_CACHE"
+fi
+```
+
+Use history cache during classification to look up account codes by contact:
+
+```bash
+# Single contact lookup (when needed during rounds)
+bun run xero-cli history --since 2024-01-01 --contact "Body Fit Training Sydney" --json
+
+# Verify what else uses a specific account code
+bun run xero-cli history --since 2024-01-01 --account-code 485 --json
+```
+
+When history shows a contact has been consistently assigned to one account code, this is the highest confidence signal (+80 in the scoring model). Show the user their own history as evidence: "You've assigned Body Fit to 485 (Subscriptions) 38 times."
+
+**Step 5b: Build contact lookup (secondary source - for ContactID resolution)**
+
 Build contact lookup from `bank-transactions.ndjson` (if present) using hook-safe script commands:
 
 ```bash
@@ -246,7 +280,9 @@ python3 scripts/xero-contact-lookup.py summary data/bank-transactions.ndjson
 python3 scripts/xero-contact-lookup.py build data/bank-transactions.ndjson data/.xero-contact-lookup.json
 ```
 
-If `reconciled with account code` is very low, downgrade confidence for Round 1 suggestions and require tighter approval grouping.
+This lookup is still valuable for **ContactID resolution** (linking to existing Xero contacts in POST bodies), even though its account codes are unreliable.
+
+If `reconciled with account code` is very low in the contact lookup, that's expected -- use the CLI history cache as the primary account code source instead.
 
 Classify each unreconciled statement line into rounds:
 - **Round 1 (auto-matched):** payee matches contact lookup with historical account code

@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-03-09",
+  "updatedAt": "2026-03-10",
   "scoring": {
     "base": 0,
+    "cliHistoryMatch": 80,
     "exactNormalizedPayeeMatch": 70,
     "amountWithinHistoricalRangeOrTolerance": 15,
     "recurrenceCountGte3": 10,
