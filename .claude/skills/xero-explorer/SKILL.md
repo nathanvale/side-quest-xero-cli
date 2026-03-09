@@ -8,7 +8,6 @@ description: >
   around the OAuth 403 block.
 argument-hint: "{extract|reconcile|status|quarter-status|new-quarter}"
 disable-model-invocation: true
-allowed-tools: Bash
 ---
 
 # xero-explorer

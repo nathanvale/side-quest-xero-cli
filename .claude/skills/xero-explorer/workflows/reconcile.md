@@ -291,7 +291,7 @@ This lookup is still valuable for **ContactID resolution** (linking to existing 
 If `reconciled with account code` is very low in the contact lookup, that's expected -- use the CLI history cache as the primary account code source instead.
 
 Classify each unreconciled statement line into rounds:
-- **Round 1 (auto-matched):** payee matches contact lookup with historical account code
+- **Round 1 (auto-matched):** normalized payee matches history or contact lookup, amount within historical range
 - **Round 2 (AI-researched):** unrecognized payee with identifiable business name
 - **Round 3 (truly unknown):** generic descriptions, no useful signal
 
@@ -336,7 +336,7 @@ Present via selected mode:
 - Per group show items, then ask:
 
 ```
-[High] SOFTWARE/SAAS (42 items, $2,340.50) -> 6310
+[High] SOFTWARE/SAAS (42 items, $2,340.50) -> 495
 
   1. GITHUB          $9.00    2026-02-01  (matched 11 months)
   2. GITHUB          $9.00    2026-01-01  (matched 11 months)
@@ -352,7 +352,7 @@ Approve all 42? (yes / except N,N / change code / skip group)
 
 **Rapid-fire mode:**
 - One at a time, suggested code pre-filled
-- `[1/300] GITHUB ($9.00, 2026-02-01, SPEND) -> 6310 Software/SaaS (11 prior matches)`
+- `[1/300] GITHUB ($9.00, 2026-02-01, SPEND) -> 495 Software/SaaS (11 prior matches)`
 - Enter = approve, type code = override, "skip" = skip
 - Streak counter: "Streak: 12 in a row!" (reset without fanfare on skip)
 - Pace indicator: "Pace: ~4 items/min"
@@ -388,7 +388,7 @@ For each unknown vendor, run the research protocol from matching-rules.md:
 Group researched items by suggested account code for batch presentation. Include research evidence per line item:
 
 ```
-ENTERTAINMENT (8 items, $340.00) -> 6420
+ENTERTAINMENT (8 items, $340.00) -> 420
 
   1. SQ *MOKOSZ        $45.00   2026-02-10  "Mokosz is a cafe in Elwood, VIC"
   2. MARY'S BAR        $62.00   2026-02-14  "Bar in Fitzroy, VIC"
@@ -412,8 +412,8 @@ Always one-at-a-time regardless of mode, maximum context per item:
 [276/300] DIRECT DEBIT  -$150.00  2026-02-01
 
   No history match. No research results.
-  Similar amounts in history:
-    DIRECT DEBIT $150.00 x3 (Jan, Dec, Nov) -- previously coded to 6440 Motor Vehicle
+  No similar amounts found in history.
+  Generic payee -- cannot determine vendor.
 
   Account code? (type code / skip / stop)
 ```
@@ -425,7 +425,7 @@ After every action:
 ```
 Q1 FY26 -- Round 1 -- Easy matches
 [====================............] 147/300 (49%)  ~8 min left
-Last: Spotify ($14.99) -> 6310 Software/SaaS
+Last: Spotify ($14.99) -> 495 Software/SaaS
 Approved (not yet written): 162
 Posted (written to Xero): 0
 XP: 162 | Streak: 12 | Tax readiness: 54%
@@ -450,7 +450,8 @@ XP model (lightweight and deterministic):
 - Track and show personal-best pace for this quarter
 
 Tax readiness meter:
-- Derived from `posted + confirmed + skipped` vs total unreconciled
+- Derived from `(posted + confirmed) / total unreconciled`
+- Skipped items are excluded -- they still need attention.
 - Show as percent with one line: `Tax readiness: 54%`
 
 ### Context Budget
@@ -498,8 +499,8 @@ About to write to Xero:
   Confirmed items: 187
   Estimated batches: 19
   By code:
-    6310 Software/SaaS: 74 items ($1,902.40)
-    6420 Entertainment: 18 items ($740.00)
+    495 Software/SaaS: 74 items ($1,902.40)
+    420 Entertainment: 18 items ($740.00)
     ...
 ```
 
@@ -521,7 +522,7 @@ Safe preview contract (must be internally consistent before write):
   "confirmedCount": 187,
   "estimatedPostBatches": 19,
   "byCode": [
-    { "accountCode": "6310", "count": 74, "amountTotal": 1902.40 }
+    { "accountCode": "495", "count": 74, "amountTotal": 1902.40 }
   ]
 }
 ```

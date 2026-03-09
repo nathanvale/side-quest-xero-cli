@@ -77,6 +77,7 @@ This is intentionally different from the CLI's path (`<root>/.xero-reconcile-sta
 **`confidenceScore` / `confidenceBand` / `confidenceVersion`:**
 - Required for each transaction at `classified` stage and onward
 - `confidenceVersion` ties classification to the scoring contract version in matching-rules
+- `confidenceVersion` is derived as `"v" + confidence-weights.json schemaVersion` (e.g., schemaVersion 1 -> "v1", schemaVersion 2 -> "v2")
 
 **`statementLinesFile`:** Exact NDJSON path for this session (for example, `data/statement-lines-fy26-q1.ndjson`).
 

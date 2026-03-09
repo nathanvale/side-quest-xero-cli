@@ -118,9 +118,9 @@ If no tenant visible, tell user to log in manually and wait.
 
 ### Step 3: CLI auth + tenant preflight
 
-Confirm tenant is "Arthur & B Consulting":
+Confirm the active tenant matches your target org:
 ```bash
-bun src/cli/command.ts status --json
+bun run xero-cli status --json
 ```
 
 If CLI status reports auth/config warnings, run:

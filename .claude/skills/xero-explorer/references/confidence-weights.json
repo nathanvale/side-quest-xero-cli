@@ -10,7 +10,8 @@
     "stableHistoricalAccountCode": 10,
     "amountAnomalyOutsideTolerance": -25,
     "genericPayeeToken": -20,
-    "ambiguousVendorWithoutHistory": -15
+    "ambiguousVendorWithoutHistory": -15,
+    "mutuallyExclusive": [["cliHistoryMatch", "exactNormalizedPayeeMatch"]]
   },
   "bands": {
     "high": {

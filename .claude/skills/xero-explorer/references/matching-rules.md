@@ -2,7 +2,7 @@
 
 Categorization rules, contact lookup, vendor research, and POST body templates for reconciliation.
 
-> Canonical rules for `/xero-explorer` as of 2026-03-05.
+> Canonical rules for `/xero-explorer` as of 2026-03-10.
 
 Changelog:
 - 2026-03-10: added CLI history lookup as primary account code source
@@ -133,6 +133,8 @@ Use this scoring model to avoid drift. The machine-readable source of truth is
 - `-20` generic payee tokens (`DIRECT DEBIT`, `TRANSFER`, `PAYMENT`, `CASH`)
 - `-15` no contact history + ambiguous vendor
 
+**Mutual exclusivity:** `cliHistoryMatch` and `exactNormalizedPayeeMatch` are mutually exclusive -- apply the higher of the two, not both. CLI history match subsumes contact lookup match.
+
 **Priority of account code sources:**
 
 1. CLI `history` command (highest -- actual reconciled account codes from Xero)
@@ -197,7 +199,7 @@ Cache results keyed by **normalized** vendor name (lowercased, prefixes stripped
     "result": "Cafe/restaurant in Elwood, VIC",
     "suggestedCode": "6420",
     "confidence": "medium",
-    "searchedAt": "2026-03-05T10:35:00"
+    "searchedAt": "2026-03-05T10:35:00+11:00"
   }
 }
 ```
