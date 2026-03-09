@@ -145,7 +145,7 @@ for f in "$SL_FILE" data/accounts.ndjson; do
   fi
 done
 
-for f in data/bank-transactions.ndjson data/invoices.ndjson data/contacts.ndjson; do
+for f in data/bank-transactions.ndjson data/invoices.ndjson data/contacts.ndjson data/payments.ndjson; do
   if [ -f "$f" ]; then
     echo "$(basename "$f"): $(wc -l < "$f") records (optional enrichment)"
   else
@@ -169,6 +169,7 @@ python3 scripts/xero-ndjson-peek.py data/accounts.ndjson 5 Code Name Type Accoun
 - `data/bank-transactions.ndjson` -- contact history lookup (normalized payee -> ContactID)
 - `data/invoices.ndjson` -- invoice matching for RECEIVE transactions
 - `data/contacts.ndjson` -- full contact details
+- `data/payments.ndjson` -- payment audit trail for post-execute verification
 
 If critical files are missing, stop and tell user to run `/xero-explorer extract` first.
 

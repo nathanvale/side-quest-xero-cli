@@ -23,6 +23,7 @@ Run all commands from the side-quest-xero-cli project root (where `package.json`
 | `auth` | -- | OAuth2 PKCE flow (browser-based, human interaction required) |
 | `transactions` | `tx` | Read bank transactions |
 | `accounts` | `acct` | Read chart of accounts |
+| `contacts` | `ctc` | Read contacts |
 | `invoices` | `inv` | Read invoices |
 | `payments` | `pay` | Read payments |
 | `history` | `hist` | Read past reconciled transactions (grouped by contact) |

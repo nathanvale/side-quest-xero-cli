@@ -155,6 +155,7 @@ Parse all files:
 | `data/bank-transactions.ndjson` | `xero-cli transactions --json` (Accounting API /BankTransactions) | `transactions[]` |
 | `data/invoices.ndjson` | `xero-cli invoices --json` (Accounting API /Invoices) | `invoices[]` |
 | `data/contacts.ndjson` | `xero-cli contacts --json` (Accounting API /Contacts) | `contacts[]` |
+| `data/payments.ndjson` | `xero-cli payments --json` (Accounting API /Payments) | `payments[]` |
 | `data/statement-lines-fy{YY}-q{N}.ndjson` | `agent-browser` + Finance API /BankStatementsPlus | `statements[].statementLines[]` (per quarter) |
 
 **Statement lines are quarter-scoped** -- each quarter gets its own file so previous extractions are never overwritten.

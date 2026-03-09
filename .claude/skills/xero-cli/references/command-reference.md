@@ -109,6 +109,15 @@ bun run xero-cli accounts --type REVENUE --json
 bun run xero-cli accounts --json --fields Code,Name,Type
 ```
 
+### contacts (alias: `ctc`)
+
+Pull contacts.
+
+```bash
+bun run xero-cli contacts --json
+bun run xero-cli contacts --json --fields ContactID,Name,EmailAddress,IsSupplier
+```
+
 ### history (alias: `hist`)
 
 Pull reconciliation history. `--since` is required.
@@ -206,15 +215,15 @@ bun run xero-cli status --json
 
 # Step 2: Load chart of accounts (for categorization reference)
 bun run xero-cli accounts --json --fields Code,Name,Type
-# -> data.items[]: { Code, Name, Type }
+# -> data.accounts[]: { Code, Name, Type }
 
 # Step 3: Load reconciliation history (past patterns)
 bun run xero-cli history --since 2025-07-01 --json --fields Contact,AccountCode,Count,AmountMin,AmountMax
-# -> data.items[]: { Contact, AccountCode, Count, AmountMin, AmountMax }
+# -> data.transactions[]: { Contact, AccountCode, Count, AmountMin, AmountMax }
 
 # Step 4: Fetch unreconciled bank transactions (Accounting API)
 bun run xero-cli transactions --unreconciled --json --fields BankTransactionID,Total,Contact.Name,Date,Type --limit 50
-# -> data.items[]: { BankTransactionID, Total, Contact: { Name }, Date, Type }
+# -> data.transactions[]: { BankTransactionID, Total, Contact: { Name }, Date, Type }
 # NOTE: BankTransactionID is the key -- carry it unchanged into reconcile input
 
 # Step 5: Match and build proposal (agent logic)

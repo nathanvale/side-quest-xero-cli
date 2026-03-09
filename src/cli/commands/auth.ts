@@ -23,6 +23,16 @@ interface AuthSuccessData {
 	readonly orgName: string
 }
 
+/**
+ * Requested scopes for fresh auth.
+ *
+ * These reflect the current command surface, including the post-reconcile
+ * `payments` read primitive and invoice lookups. Granular scopes keep first-run
+ * capability parity aligned with the tools we advertise.
+ */
+export const AUTH_SCOPE =
+	'accounting.banktransactions accounting.payments accounting.invoices accounting.contacts accounting.settings.read offline_access'
+
 function printSetupGuide(): void {
 	const lines = [
 		'xero-cli setup checklist:',
@@ -66,8 +76,7 @@ export async function runAuth(
 	}
 
 	try {
-		const scope =
-			'accounting.transactions accounting.contacts accounting.settings.read accounting.reports.read offline_access'
+		const scope = AUTH_SCOPE
 
 		authCmdLogger.info('Starting OAuth2 PKCE flow with scope={scope}', {
 			scope,

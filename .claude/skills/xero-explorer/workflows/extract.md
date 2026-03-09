@@ -206,6 +206,7 @@ python3 scripts/xero-cli-extract.py accounts
 python3 scripts/xero-cli-extract.py bank-transactions
 python3 scripts/xero-cli-extract.py invoices
 python3 scripts/xero-cli-extract.py contacts
+python3 scripts/xero-cli-extract.py payments
 ```
 
 #### 4e: BankStatementsPlus (Finance API)

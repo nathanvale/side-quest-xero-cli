@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
+import { AUTH_SCOPE } from '../../src/cli/commands/auth'
 import { type OutputContext, writeSuccess } from '../../src/cli/output'
 import { isHeadless } from '../../src/xero/auth'
 import { withCapturedOutput } from '../helpers/test-isolation'
@@ -79,6 +80,16 @@ describe('isHeadless() detection', () => {
 			configurable: true,
 		})
 		expect(isHeadless()).toBe(false)
+	})
+})
+
+describe('auth scope manifest', () => {
+	it('includes the currently advertised accounting capabilities', () => {
+		expect(AUTH_SCOPE).toContain('accounting.banktransactions')
+		expect(AUTH_SCOPE).toContain('accounting.payments')
+		expect(AUTH_SCOPE).toContain('accounting.invoices')
+		expect(AUTH_SCOPE).toContain('accounting.contacts')
+		expect(AUTH_SCOPE).toContain('accounting.settings.read')
 	})
 })
 

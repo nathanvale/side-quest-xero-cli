@@ -32,6 +32,11 @@ DATASET_CONFIG = {
         "data_key": "contacts",
         "out": Path("data/contacts.ndjson"),
     },
+    "payments": {
+        "command": ["payments"],
+        "data_key": "payments",
+        "out": Path("data/payments.ndjson"),
+    },
 }
 
 
@@ -96,7 +101,7 @@ def extract_dataset(name: str) -> int:
 
 def usage() -> int:
     print("Usage: python3 scripts/xero-cli-extract.py <dataset|all>")
-    print("Datasets: accounts, bank-transactions, invoices, contacts, all")
+    print("Datasets: accounts, bank-transactions, invoices, contacts, payments, all")
     return 1
 
 
@@ -106,7 +111,7 @@ def main() -> int:
     target = sys.argv[1].strip().lower()
     if target == "all":
         total = 0
-        for name in ("accounts", "bank-transactions", "invoices", "contacts"):
+        for name in ("accounts", "bank-transactions", "invoices", "contacts", "payments"):
             total += extract_dataset(name)
         print(f"all datasets complete ({total} rows total)")
         return 0
