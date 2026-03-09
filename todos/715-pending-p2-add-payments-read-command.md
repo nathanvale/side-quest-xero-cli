@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "715"
 tags: [crud, feature, agent-native]
@@ -40,7 +40,7 @@ The CLI creates payments via `reconcile --execute` (PUT /Payments) but has no wa
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

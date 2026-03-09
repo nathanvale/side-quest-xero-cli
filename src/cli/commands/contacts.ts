@@ -14,6 +14,7 @@ import {
 	writeError,
 	writeSuccess,
 } from '../output'
+import { emitListPageFetched } from './list-progress'
 
 interface ContactsCommand {
 	readonly command: 'contacts'
@@ -93,6 +94,13 @@ export async function runContacts(
 			)
 			const pageItems = response.Contacts ?? []
 			contacts.push(...pageItems)
+			emitListPageFetched(
+				ctx.eventsConfig,
+				'contacts',
+				page,
+				pageItems.length,
+				contacts.length,
+			)
 			if (pageItems.length < PAGE_SIZE) break
 			if (page === MAX_PAGES) {
 				truncated = true

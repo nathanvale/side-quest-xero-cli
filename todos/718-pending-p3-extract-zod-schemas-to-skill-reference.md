@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "718"
 tags: [prompt-native, documentation, agent-native]
@@ -30,7 +30,7 @@ Reconcile input validation schemas (Zod) are hardcoded in reconcile.ts. Agents m
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

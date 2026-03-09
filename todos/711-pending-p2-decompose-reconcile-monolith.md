@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "711"
 tags: [architecture, tools-as-primitives, agent-native]
@@ -57,7 +57,7 @@ dependencies: []
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

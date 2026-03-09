@@ -1,5 +1,9 @@
 # bun-typescript-starter
 
+## xero-cli
+
+For the Xero workflow in this repo, start with [GETTING_STARTED.md](./GETTING_STARTED.md).
+
 Modern TypeScript starter template with enterprise-grade tooling.
 
 ## Features

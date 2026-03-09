@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { emitEvent, resolveEventsConfig } from '../events'
 import {
 	getXeroLogger,
@@ -12,6 +13,7 @@ import { runAuth } from './commands/auth'
 import { runContacts } from './commands/contacts'
 import { runHistory } from './commands/history'
 import { runInvoices } from './commands/invoices'
+import { runPayments } from './commands/payments'
 import { runReconcile } from './commands/reconcile'
 import { runStatus } from './commands/status'
 import { runTransactions } from './commands/transactions'
@@ -117,6 +119,15 @@ interface HelpCommand extends OutputContext {
 	readonly topic: string | null
 }
 
+interface PaymentsCommand extends OutputContext {
+	readonly command: 'payments'
+	readonly since: string | null
+	readonly until: string | null
+	readonly page: number | null
+	readonly limit: number | null
+	readonly fields: readonly string[] | null
+}
+
 interface ReconcileCommand extends OutputContext {
 	readonly command: 'reconcile'
 	readonly execute: boolean
@@ -131,6 +142,7 @@ type CliOptions =
 	| TransactionsCommand
 	| HistoryCommand
 	| InvoicesCommand
+	| PaymentsCommand
 	| ReconcileCommand
 	| HelpCommand
 
@@ -181,6 +193,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, Set<string>> = {
 	]),
 	history: new Set(['--fields', '--since', '--contact', '--account-code']),
 	invoices: new Set(['--fields', '--status', '--type']),
+	payments: new Set(['--fields', '--since', '--until', '--page', '--limit']),
 	reconcile: new Set(['--execute', '--dry-run', '--from-csv']),
 	help: new Set([]),
 	version: new Set([]),
@@ -469,6 +482,7 @@ export function parseCli(argv: readonly string[]): ParseCliResult {
 	if (commandToken === 'acct') commandToken = 'accounts'
 	if (commandToken === 'ctc') commandToken = 'contacts'
 	if (commandToken === 'inv') commandToken = 'invoices'
+	if (commandToken === 'pay') commandToken = 'payments'
 	if (commandToken === 'rec') commandToken = 'reconcile'
 	if (commandToken === 'hist') commandToken = 'history'
 
@@ -680,9 +694,50 @@ export function parseCli(argv: readonly string[]): ParseCliResult {
 			},
 		}
 	}
+	if (commandToken === 'payments') {
+		const { fields, error } = parseFields(fieldsRaw, json, quiet)
+		if (error) return error
+		const page = pageRaw ? Number(pageRaw) : null
+		const limit = limitRaw ? Number(limitRaw) : null
+		if (pageRaw && (page === null || !Number.isInteger(page) || page <= 0)) {
+			return parseUsageError('Invalid --page value', json, quiet)
+		}
+		if (
+			limitRaw &&
+			(limit === null || !Number.isInteger(limit) || limit <= 0)
+		) {
+			return parseUsageError('Invalid --limit value', json, quiet)
+		}
+		if (sinceRaw && !isIsoDate(sinceRaw)) {
+			return parseUsageError(
+				'Invalid --since value (expected YYYY-MM-DD)',
+				json,
+				quiet,
+			)
+		}
+		if (untilRaw && !isIsoDate(untilRaw)) {
+			return parseUsageError(
+				'Invalid --until value (expected YYYY-MM-DD)',
+				json,
+				quiet,
+			)
+		}
+		return {
+			ok: true,
+			options: {
+				command: 'payments',
+				...outputMode,
+				since: sinceRaw,
+				until: untilRaw,
+				page,
+				limit,
+				fields,
+			},
+		}
+	}
 	if (fieldsRaw) {
 		return parseUsageError(
-			'--fields is only valid for list commands (accounts, contacts, transactions, history, invoices)',
+			'--fields is only valid for list commands (accounts, contacts, transactions, history, invoices, payments)',
 			json,
 			quiet,
 		)
@@ -811,10 +866,14 @@ function usageText(): string {
 	return usageForTopic(null)
 }
 
+function isFirstRun(): boolean {
+	return !existsSync('.xero-config.json')
+}
+
 function usageForTopic(topic: string | null): string {
 	const normalizedTopic = topic?.toLowerCase() ?? null
 	if (!normalizedTopic) {
-		return [
+		const lines = [
 			'xero-cli',
 			'',
 			'Usage:',
@@ -823,12 +882,13 @@ function usageForTopic(topic: string | null): string {
 			'Commands:',
 			'  auth           OAuth2 PKCE flow',
 			'  status         Check auth + API connectivity',
-			'  accounts       List chart of accounts',
-			'  contacts       List contacts',
-			'  transactions   List bank transactions',
-			'  history        Grouped reconciliation history',
-			'  invoices       List outstanding invoices',
-			'  reconcile      Reconcile transactions from stdin or CSV',
+			'  accounts       List chart of accounts (alias: acct)',
+			'  contacts       List contacts (alias: ctc)',
+			'  transactions   List bank transactions (alias: tx)',
+			'  history        Grouped reconciliation history (alias: hist)',
+			'  invoices       List outstanding invoices (alias: inv)',
+			'  payments       List payments created in Xero (alias: pay)',
+			'  reconcile      Reconcile transactions from stdin or CSV (alias: rec)',
 			'  help [topic]   Show help (command, flags, aliases, version)',
 			'',
 			'Global Flags:',
@@ -844,7 +904,16 @@ function usageForTopic(topic: string | null): string {
 			'  bun run xero-cli help transactions',
 			'  bun run xero-cli help flags',
 			'  bun run xero-cli help aliases',
-		].join('\n')
+		]
+		if (isFirstRun()) {
+			lines.push(
+				'',
+				'First run?',
+				'  Start with: bun run xero-cli status',
+				'  Setup guide: GETTING_STARTED.md',
+			)
+		}
+		return lines.join('\n')
 	}
 
 	if (normalizedTopic === 'flags' || normalizedTopic === 'global') {
@@ -867,6 +936,7 @@ function usageForTopic(topic: string | null): string {
 			'  acct -> accounts',
 			'  ctc  -> contacts',
 			'  inv  -> invoices',
+			'  pay  -> payments',
 			'  rec  -> reconcile',
 			'  hist -> history',
 		].join('\n')
@@ -911,6 +981,17 @@ function usageForTopic(topic: string | null): string {
 			`  --status  ${INVOICE_STATUS_ALLOWLIST.join('|')}`,
 			`  --type    ${INVOICE_TYPE_ALLOWLIST.join('|')}`,
 			'  --fields  Comma-separated field list',
+			'Defaults:',
+			'  Status=="AUTHORISED" when no explicit filter is provided',
+		].join('\n'),
+		payments: [
+			'Usage: bun run xero-cli payments [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>] [--page <n>] [--limit <n>] [--fields <f1,f2,...>]',
+			'Flags:',
+			'  --since   Inclusive payment date lower bound',
+			'  --until   Inclusive payment date upper bound',
+			'  --page    Server-side page number',
+			'  --limit   Client-side result limit',
+			'  --fields  Comma-separated field list',
 		].join('\n'),
 		reconcile: [
 			'Usage: bun run xero-cli reconcile [--from-csv <file>] [--execute|--dry-run]',
@@ -923,7 +1004,7 @@ function usageForTopic(topic: string | null): string {
 	}
 	if (commandHelp[normalizedTopic]) return commandHelp[normalizedTopic]
 
-	return [
+	const lines = [
 		'xero-cli',
 		'',
 		'Usage:',
@@ -937,6 +1018,7 @@ function usageForTopic(topic: string | null): string {
 		'  transactions   List bank transactions',
 		'  history        Grouped reconciliation history',
 		'  invoices       List outstanding invoices',
+		'  payments       List payments created in Xero',
 		'  reconcile      Reconcile transactions from stdin or CSV',
 		'  help [topic]   Show help',
 		'',
@@ -963,9 +1045,19 @@ function usageForTopic(topic: string | null): string {
 		'  acct -> accounts',
 		'  ctc  -> contacts',
 		'  inv  -> invoices',
+		'  pay  -> payments',
 		'  rec  -> reconcile',
 		'  hist -> history',
-	].join('\n')
+	]
+	if (isFirstRun()) {
+		lines.push(
+			'',
+			'First run?',
+			'  Start with: bun run xero-cli status',
+			'  Setup guide: GETTING_STARTED.md',
+		)
+	}
+	return lines.join('\n')
 }
 
 /**
@@ -1079,6 +1171,9 @@ export async function runCli(argv: readonly string[]): Promise<ExitCode> {
 					break
 				case 'invoices':
 					exitCode = await runInvoices(ctx, options)
+					break
+				case 'payments':
+					exitCode = await runPayments(ctx, options)
 					break
 				case 'reconcile':
 					exitCode = await runReconcile(ctx, options)

@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "719"
 tags: [capability-discovery, ux, agent-native]
@@ -30,7 +30,7 @@ No welcome message or first-run guidance exists. Setup guide only appears when a
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

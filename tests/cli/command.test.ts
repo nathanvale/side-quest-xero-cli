@@ -158,6 +158,36 @@ describe('--fields flag routing', () => {
 			expect(result.options).toHaveProperty('fields', ['InvoiceID', 'Total'])
 		}
 	})
+
+	it('accepts payments command with filters and fields', () => {
+		const result = parseCli([
+			'node',
+			'xero-cli',
+			'payments',
+			'--since',
+			'2026-01-01',
+			'--until',
+			'2026-03-31',
+			'--fields',
+			'PaymentID,Amount',
+			'--limit',
+			'10',
+			'--json',
+		])
+		expect(result.ok).toBe(true)
+		if (result.ok) {
+			expect(result.options.command).toBe('payments')
+			expect(result.options).toHaveProperty('fields', ['PaymentID', 'Amount'])
+		}
+	})
+
+	it('maps pay alias to payments', () => {
+		const result = parseCli(['node', 'xero-cli', 'pay', '--json'])
+		expect(result.ok).toBe(true)
+		if (result.ok) {
+			expect(result.options.command).toBe('payments')
+		}
+	})
 })
 
 describe('date range flag conflicts', () => {

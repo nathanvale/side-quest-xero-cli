@@ -50,8 +50,10 @@ bun run xero-cli status --json
 | `lock_file` | No stale lock |
 | `audit_dir` | Audit directory exists |
 | `api` | Xero Organisation API reachable |
+| `scopes` | OAuth scopes embedded in the current token |
 
 Each check has `status` (`ok` | `warning` | `error`) and optional `message`.
+`availableScopes` is also returned at the top level of the status payload.
 
 ### auth
 
@@ -130,6 +132,19 @@ bun run xero-cli invoices --status AUTHORISED --type ACCREC --json
 bun run xero-cli invoices --json --fields InvoiceID,Contact.Name,Total,AmountDue,CurrencyCode
 ```
 
+The JSON response includes `appliedFilters` so agents can tell whether the
+default `AUTHORISED` filter was implicit or explicitly supplied.
+
+### payments (alias: `pay`)
+
+Pull payments for reconciliation audit trails.
+
+```bash
+bun run xero-cli payments --since 2026-01-01 --json
+bun run xero-cli payments --since 2026-01-01 --until 2026-03-31 --json
+bun run xero-cli payments --json --fields PaymentID,Amount,Date,Invoice.InvoiceNumber,Account.Code
+```
+
 ### reconcile (alias: `rec`)
 
 Execute reconciliation. **Writes only with `--execute`.** Without `--execute` (or with `--dry-run`), reconcile validates input but does not write.
@@ -167,7 +182,7 @@ bun run xero-cli reconcile --from-csv path/to/file.csv --execute --json
 
 ## --fields Support
 
-Available on all list commands: `accounts`, `transactions`, `history`, `invoices`. Accepts comma-separated dot-path field names (e.g., `Contact.Name`, `LineItems.AccountCode`). Fields must match `[A-Za-z0-9_.]`.
+Available on all list commands: `accounts`, `transactions`, `history`, `invoices`, `payments`. Accepts comma-separated dot-path field names (e.g., `Contact.Name`, `LineItems.AccountCode`). Fields must match `[A-Za-z0-9_.]`.
 
 ## Command Aliases
 
@@ -176,6 +191,7 @@ Available on all list commands: `accounts`, `transactions`, `history`, `invoices
 | `tx` | `transactions` |
 | `acct` | `accounts` |
 | `inv` | `invoices` |
+| `pay` | `payments` |
 | `rec` | `reconcile` |
 | `hist` | `history` |
 

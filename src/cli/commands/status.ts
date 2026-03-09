@@ -35,6 +35,7 @@ interface StatusCheck {
 interface StatusData {
 	readonly command: 'status'
 	readonly checks: StatusCheck[]
+	readonly availableScopes: string[]
 	readonly diagnosis:
 		| 'ok'
 		| 'needs-auth'
@@ -73,6 +74,7 @@ export async function runStatus(ctx: OutputContext): Promise<ExitCode> {
 	let stateOk = true
 	let lockOk = true
 	let auditOk = true
+	let availableScopes: string[] = []
 
 	try {
 		loadEnvConfig()
@@ -112,10 +114,23 @@ export async function runStatus(ctx: OutputContext): Promise<ExitCode> {
 	try {
 		tokens = await loadTokens()
 		tokensExpired = isTokenExpired(tokens.expiresAt)
+		availableScopes =
+			tokens.scope
+				?.split(/\s+/)
+				.map((scope) => scope.trim())
+				.filter((scope) => scope.length > 0) ?? []
 		checks.push({
 			name: 'keychain',
 			status: tokensExpired ? 'warning' : 'ok',
 			message: tokensExpired ? 'Token expired, re-auth required' : undefined,
+		})
+		checks.push({
+			name: 'scopes',
+			status: availableScopes.length > 0 ? 'ok' : 'warning',
+			message:
+				availableScopes.length > 0
+					? undefined
+					: 'Authorized scopes unavailable until auth succeeds',
 		})
 	} catch (err) {
 		keychainOk = false
@@ -127,11 +142,21 @@ export async function runStatus(ctx: OutputContext): Promise<ExitCode> {
 				status: 'error',
 				message: err.message,
 			})
+			checks.push({
+				name: 'scopes',
+				status: 'warning',
+				message: 'Skipped scope check (tokens unavailable)',
+			})
 		} else {
 			checks.push({
 				name: 'keychain',
 				status: 'error',
 				message: err instanceof Error ? err.message : String(err),
+			})
+			checks.push({
+				name: 'scopes',
+				status: 'warning',
+				message: 'Skipped scope check (tokens unavailable)',
 			})
 		}
 	}
@@ -322,6 +347,7 @@ export async function runStatus(ctx: OutputContext): Promise<ExitCode> {
 				diagnosis,
 				nextAction,
 				checks,
+				availableScopes,
 			},
 		)
 	} else {
@@ -330,6 +356,7 @@ export async function runStatus(ctx: OutputContext): Promise<ExitCode> {
 			{
 				command: 'status',
 				checks,
+				availableScopes,
 				diagnosis,
 				nextAction,
 			} satisfies StatusData,

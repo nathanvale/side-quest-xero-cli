@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-03-09",
+  "scoring": {
+    "base": 0,
+    "exactNormalizedPayeeMatch": 70,
+    "amountWithinHistoricalRangeOrTolerance": 15,
+    "recurrenceCountGte3": 10,
+    "stableHistoricalAccountCode": 10,
+    "amountAnomalyOutsideTolerance": -25,
+    "genericPayeeToken": -20,
+    "ambiguousVendorWithoutHistory": -15
+  },
+  "bands": {
+    "high": {
+      "min": 75,
+      "max": 999
+    },
+    "medium": {
+      "min": 45,
+      "max": 74
+    },
+    "low": {
+      "min": -999,
+      "max": 44
+    }
+  },
+  "batchPolicy": {
+    "high": 25,
+    "medium": 12,
+    "low": 5
+  }
+}

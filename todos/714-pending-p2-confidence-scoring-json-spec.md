@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "714"
 tags: [prompt-native, matching, agent-native]
@@ -49,7 +49,7 @@ Confidence scoring for reconciliation matching is defined as prose rules in `mat
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

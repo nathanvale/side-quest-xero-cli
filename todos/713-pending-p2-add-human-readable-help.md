@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "713"
 tags: [capability-discovery, ux, agent-native]
@@ -50,7 +50,7 @@ bun run xero-cli --help
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

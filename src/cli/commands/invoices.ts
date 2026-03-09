@@ -15,6 +15,7 @@ import {
 	writeError,
 	writeSuccess,
 } from '../output'
+import { emitListPageFetched } from './list-progress'
 
 interface InvoicesCommand {
 	readonly command: 'invoices'
@@ -126,6 +127,13 @@ export async function runInvoices(
 			)
 			const pageItems = response.Invoices ?? []
 			invoices.push(...pageItems)
+			emitListPageFetched(
+				ctx.eventsConfig,
+				'invoices',
+				page,
+				pageItems.length,
+				invoices.length,
+			)
 			if (pageItems.length < PAGE_SIZE) break
 			if (page === MAX_PAGES) {
 				truncated = true

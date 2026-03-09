@@ -24,10 +24,13 @@ Run all commands from the side-quest-xero-cli project root (where `package.json`
 | `transactions` | `tx` | Read bank transactions |
 | `accounts` | `acct` | Read chart of accounts |
 | `invoices` | `inv` | Read invoices |
+| `payments` | `pay` | Read payments |
 | `history` | `hist` | Read past reconciled transactions (grouped by contact) |
 | `reconcile` | `rec` | Create reconciliation entries (stdin JSON or CSV) |
 
 For complete flag reference and examples, read [references/command-reference.md](references/command-reference.md).
+
+For reconcile input shapes, read [references/input-schemas.md](references/input-schemas.md).
 
 For error codes, retry policy, and batch strategy, read [references/error-handling.md](references/error-handling.md).
 

@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "717"
 tags: [context-injection, status, agent-native]
@@ -31,7 +31,7 @@ Agents must infer available OAuth scopes from error payloads (`scopeRequired`, `
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

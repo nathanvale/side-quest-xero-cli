@@ -4,6 +4,9 @@ Categorization rules, contact lookup, vendor research, and POST body templates f
 
 > Canonical rules for `/xero-explorer` as of 2026-03-05.
 
+Changelog:
+- 2026-03-09: extracted deterministic confidence weights to `confidence-weights.json`
+
 ## Sync Contract
 
 Source of truth for matching logic is this file:
@@ -54,7 +57,8 @@ The generated lookup file includes:
 
 ### Confidence scoring contract (for deterministic grouping)
 
-Use this scoring model to avoid drift:
+Use this scoring model to avoid drift. The machine-readable source of truth is
+`references/confidence-weights.json`.
 
 - Base score starts at `0`
 - `+70` exact normalized payee match in contact lookup

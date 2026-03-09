@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "716"
 tags: [ui-integration, observability, agent-native]
@@ -31,7 +31,7 @@ List commands (accounts, contacts, invoices, transactions, history) fetch pagina
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

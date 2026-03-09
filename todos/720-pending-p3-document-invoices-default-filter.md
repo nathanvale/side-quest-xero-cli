@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "720"
 tags: [tools-as-primitives, documentation, agent-native]
@@ -30,7 +30,7 @@ The `invoices` command silently defaults to `Status=="AUTHORISED"` when no filte
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 

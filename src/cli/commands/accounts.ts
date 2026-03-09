@@ -16,6 +16,7 @@ import {
 	writeError,
 	writeSuccess,
 } from '../output'
+import { emitListPageFetched } from './list-progress'
 
 interface AccountsCommand {
 	readonly command: 'accounts'
@@ -107,6 +108,13 @@ export async function runAccounts(
 			)
 			const pageItems = response.Accounts ?? []
 			accounts.push(...pageItems)
+			emitListPageFetched(
+				ctx.eventsConfig,
+				'accounts',
+				page,
+				pageItems.length,
+				accounts.length,
+			)
 			if (pageItems.length < PAGE_SIZE) break
 			if (page === MAX_PAGES) {
 				truncated = true

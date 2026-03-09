@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "712"
 tags: [architecture, tools-as-primitives, agent-native]
@@ -47,7 +47,7 @@ export function groupTransactionsByContactAndAccount(txns: BankTransactionRecord
 
 ## Recommended Action
 
-To be filled during triage.
+Implemented on 2026-03-09.
 
 ## Acceptance Criteria
 
