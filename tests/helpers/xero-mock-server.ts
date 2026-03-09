@@ -72,8 +72,6 @@ export function createXeroMockServer(routes: MockRoute[]): {
 		return new Request(input, init)
 	}
 
-	const mockHostname = new URL(baseUrl).hostname
-
 	const mockFetch = (async (input, init) => {
 		const request = toRequest(input, init)
 		const requestUrl = new URL(request.url)
