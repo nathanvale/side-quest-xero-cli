@@ -9,6 +9,25 @@ builds-on: docs/plans/2026-03-05-feat-finance-api-statement-line-reconciliation-
 
 # CSV Round-Trip Reconciliation via Google Sheets
 
+## Enhancement Summary
+
+**Deepened on:** 2026-03-10
+**Sections enhanced:** 8
+**Research lenses used:** `best-practices-researcher`, `framework-docs-researcher`, `repo-research-analyst`, `architecture-strategist`, `security-sentinel`, `performance-oracle`, `pattern-recognition-specialist`, `kieran-python-reviewer`, `spec-flow-analyzer`, `learnings-researcher`, `cli-agent-reliability-auditor`, `code-simplicity-reviewer`, `document-review`
+
+### Key Improvements
+
+1. Tightened the **quarter seal** into a versioned artifact with explicit source fingerprints, invalidation reasons, and degraded-mode handling when history refresh is unavailable.
+2. Grounded the **CSV contract** in Python's `csv` module behavior: `newline=''`, UTF-8, `DictReader`/`DictWriter`, `QUOTE_ALL`, strict header validation, and duplicate-ID detection.
+3. Clarified **Google Sheets backup assumptions**: rely on Sheets UI version history for human rollback, because the Drive revisions API can return incomplete revision lists for heavily edited Sheets files.
+4. Added missing **edge-case handling** for blank grouping rows, apostrophe-prefixed IDs, duplicate `StatementLineID` values, stable merge ordering, sync lag, and repeat-safe POST preparation.
+
+### New Considerations Discovered
+
+- Xero's Finance API `BankStatementsPlus` request window is capped at 12 months and rejects future `ToDate` values, so quarter-scoped sealing is a naturally safe boundary.
+- Xero's OAuth scope model changed on **March 2, 2026** for newly created apps, but `finance.bankstatementsplus.read` still sits in the extra-certification Finance API bucket.
+- The local integration learning from **2026-03-05** remains critical: bank statement lines and `BankTransactions` are different data models, so `statementLineId` must stay the immutable join key through every phase.
+
 ## Overview
 
 Replace the interactive terminal-based reconciliation review (Phase B of the existing
@@ -32,6 +51,27 @@ The existing interactive reconciliation workflow has three compounding problems:
 
 Google Sheets as the review surface solves all three: no OAuth needed during review,
 no context limits (it's a spreadsheet), and zero time pressure.
+
+### Research Insights
+
+**Best Practices:**
+- Keep the review artifact human-first and offline-friendly, but keep the machine contract anchored on immutable `statementLineId` values from statement lines rather than any derived bank-transaction view.
+- Treat the review CSV as the human source of truth for approvals, while the quarter seal remains the machine source of truth for original statement-line facts and lookup data.
+
+**Implementation Details:**
+```json
+{
+  "schemaVersion": 1,
+  "quarter": "Q4 FY25",
+  "statementLineKey": "statementLineId",
+  "reviewArtifact": "reconcile-review-fy25-q4.csv",
+  "authoritativeFacts": "data/.quarter-cache-fy25-q4.json"
+}
+```
+
+**Edge Cases:**
+- If a late extraction changes the statement-line set after a review CSV already exists, the seal must invalidate the CSV and force regeneration rather than attempting a partial merge.
+- If multiple bank accounts share similar payees, the seal must carry the bank account identity so the POST phase cannot drift across accounts.
 
 ## Proposed Solution
 
@@ -124,6 +164,34 @@ Quarters must be reconciled chronologically because:
 - Xero's own matching improves with more historical data
 - Avoids gaps that confuse BAS reporting
 
+### Research Insights
+
+**Best Practices:**
+- Add `schemaVersion`, `createdBy`, and a `sourceManifest` to the seal so "is this still valid?" is based on file fingerprints and input metadata, not just counts.
+- Record explicit seal degradation state when the Accounting API history refresh fails, so later phases can distinguish "no history exists" from "history was unavailable".
+- Make `SummaryOnly=true` explicit in BankStatementsPlus extraction unless a later phase proves it needs the heavier nested line-item payload.
+
+**Performance Considerations:**
+- Quarter-scoped extraction stays comfortably inside Xero's 12-month Finance API limit and avoids accidental wide queries.
+- Refresh the expensive history cache only when the existing cache is stale or its source fingerprint changed; otherwise reuse the sealed copy.
+
+**Implementation Details:**
+```json
+{
+  "schemaVersion": 1,
+  "sealedAt": "2026-03-10T14:00:00+11:00",
+  "sourceManifest": {
+    "statementLines": {"path": "data/statement-lines-fy25-q4.ndjson", "sha256": "...", "size": 12345},
+    "accounts": {"path": "data/accounts.ndjson", "sha256": "...", "size": 67890},
+    "history": {"generatedAt": "2026-03-10T14:01:00+11:00", "status": "ok|degraded"}
+  }
+}
+```
+
+**Edge Cases:**
+- A future-dated `ToDate` or a query period longer than 12 months should fail at seal time with a direct Xero-doc-backed error message.
+- Partial seal generation must never leave a half-written cache; reuse the repo's existing atomic-write pattern and `0o600` discipline.
+
 ## CSV Column Layout
 
 Status-first layout based on reconciliation UX research. Reviewer's eye lands on
@@ -174,6 +242,36 @@ APPROVE and EDIT are immutable. AI only updates rows that are blank or REVIEW.
 
 Filename encodes quarter so multiple quarters don't collide.
 
+### Research Insights
+
+**Best Practices:**
+- Treat the 11-column header row as a hard contract. Read-back should reject missing, reordered, or extra columns unless an explicit compatibility path exists.
+- Use Python's `csv` module in text mode with `encoding="utf-8"` and `newline=""` for both reads and writes; this is the documented way to preserve quoted commas and avoid newline corruption.
+- Keep `StatementLineID` validation semantic, not regex-only: parse with `uuid.UUID(...)`, after stripping whitespace and any leading apostrophe added by Sheets.
+
+**Performance Considerations:**
+- Google Sheets supports up to 10 million cells for Sheets-created and CSV-imported spreadsheets, so 287 rows is operationally trivial.
+- If the Evidence column grows unexpectedly, `csv.field_size_limit()` is available as a safety valve during read-back.
+
+**Implementation Details:**
+```python
+with open(output_file, "w", encoding="utf-8", newline="") as f:
+    writer = csv.DictWriter(
+        f,
+        fieldnames=fieldnames,
+        quoting=csv.QUOTE_ALL,
+        lineterminator="\n",
+        extrasaction="raise",
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+```
+
+**Edge Cases:**
+- Blank separator rows inserted by the user should be ignored when they contain no `StatementLineID`; row-count validation should apply to non-empty data rows only.
+- Duplicate `StatementLineID` values after copy/paste should be a fatal validation error before merge or POST export.
+- Status values should be trimmed and uppercased before validation so `approve`, ` APPROVE `, and `Approve` normalize deterministically.
+
 ## Technical Approach
 
 ### What Exists vs What's New
@@ -194,6 +292,21 @@ Filename encodes quarter so multiple quarters don't collide.
 | CSV read-back + diff | BUILD | new script |
 | CSV merge (preserve APPROVE/EDIT, update blanks) | BUILD | new script |
 | Google Drive copy | TRIVIAL | `cp` to mounted path |
+
+### Research Insights
+
+**Best Practices:**
+- Reuse existing repo patterns where they already exist: `manage-quarters.py` already has quarter gating and atomic JSON discipline; `export-reconcile-spreadsheet.py` already has CSV and payee-normalization primitives.
+- Keep the v1 design boring: mounted Google Drive plus CSV is enough. Do not pull Sheets API or Drive API writes into the first implementation unless the local file workflow proves inadequate.
+- For any command that becomes a pipeline input, strongly prefer a `--json` mode with machine-readable stdout and human diagnostics on stderr.
+
+**Security Considerations:**
+- External vendor research remains opt-in because payee names are real financial data; keep the consent gate from `matching-rules.md`.
+- The seal should store only the minimum secrets-free metadata needed for replay. Never copy OAuth tokens or browser artifacts into the seal.
+
+**Edge Cases:**
+- If the bank account, tenant, or quarter metadata in the seal does not match the CSV filename or intended POST target, fail closed.
+- Prefer one new `read-reconcile-csv.py` with subcommands over multiple tiny scripts to avoid tool sprawl and keep the review loop discoverable.
 
 ### Implementation Phases
 
@@ -217,6 +330,29 @@ This command:
 If seal already exists and is still valid (counts match, files haven't changed),
 skip the API call and report: "Seal intact. Last sealed: [timestamp]."
 
+##### Research Insights
+
+**Best Practices:**
+- Reuse `gate_check()` from `manage-quarters.py` instead of reimplementing quarter/date validation in a second place.
+- Seal validity should compare a source manifest: path, size, modified time, and ideally a content hash for statement lines and accounts.
+- Counts alone are too weak. Add a semantic fingerprint over the statement-line payload used downstream, for example sorted `statementLineId|postedDate|amount|payee` rows, so "same count, different content" invalidates cleanly.
+- Persist `historyGeneratedAt`, `historySince`, `bankAccountId`, and `summaryOnly` in the seal so later debugging has enough provenance.
+
+**Implementation Details:**
+```json
+{
+  "sealStatus": "ok|degraded",
+  "sealInvalidationReason": null,
+  "historyGeneratedAt": "2026-03-10T14:01:00+11:00",
+  "historySince": "2024-01-01",
+  "bankAccountId": "uuid"
+}
+```
+
+**Edge Cases:**
+- If the history refresh fails, write a degraded seal only if statement lines, accounts, and contacts are still trustworthy enough for keyword-only classification.
+- If the accounts file changes after seal creation, the seal should invalidate even when statement-line counts are unchanged.
+
 #### Phase 2: Enhance Classification Script
 
 Enhance `scripts/export-reconcile-spreadsheet.py` to:
@@ -239,6 +375,22 @@ python3 scripts/export-reconcile-spreadsheet.py \
 
 Backward-compatible: old positional args still work for existing usage.
 
+##### Research Insights
+
+**Best Practices:**
+- Follow the priority order already documented in `matching-rules.md`: CLI history first, then contact lookup, then deterministic keyword rules, then optional external research.
+- Make Evidence deterministic and compact so repeated exports do not churn the CSV unnecessarily. A `signal:value` style string is easier to diff than prose.
+- Use a numeric score internally and derive `high|medium|low` bands at the end so sorting is stable and explainable.
+
+**Implementation Details:**
+```text
+history:485(count=38)|amount:within-range|contact:GITHUB INC|band:high
+```
+
+**Edge Cases:**
+- If history contains conflicting account codes for the same payee, downgrade confidence even if the contact match is exact.
+- Blank or generic payees like `TRANSFER` or `PAYMENT` should never inherit high confidence purely from amount similarity.
+
 #### Phase 3: CSV Read-Back Script
 
 New script: `scripts/read-reconcile-csv.py`
@@ -260,6 +412,28 @@ This command:
    - Invalid rows (bad account codes, mangled UUIDs)
 6. Outputs structured JSON for downstream consumption
 
+##### Research Insights
+
+**Best Practices:**
+- Use `csv.DictReader(..., restkey="__extra__", restval="")` and fail if any row contains unexpected extra cells or missing required cells.
+- Validate the header row before reading data rows so renamed columns fail fast.
+- Do not use `csv.Sniffer` here. The dialect is known and fixed by contract, so auto-detection only increases ambiguity.
+- Output a structured summary object that includes counts, invalid-row previews, duplicate IDs, and a stable diff list for downstream commands.
+
+**Implementation Details:**
+```python
+reader = csv.DictReader(f, restkey="__extra__", restval="")
+for row in reader:
+    statement_line_id = row["StatementLineID"].lstrip("'").strip()
+    uuid.UUID(statement_line_id)
+```
+
+**Edge Cases:**
+- Validate duplicate `StatementLineID` values explicitly; row-count validation alone will miss duplicate+missing pairs.
+- Ignore rows that are fully blank, but reject partially blank rows that have a status or edited account code without an ID.
+- Catch `csv.Error` and surface the physical `line_num` in failures so a malformed quoted field can be repaired quickly in Sheets or a text editor.
+- Prefer a stable-file check for the Google Drive path (same size + mtime across two reads) over a single `mtime < 5s` heuristic.
+
 #### Phase 4: CSV Merge Script (for iterations)
 
 New script or subcommand: `scripts/read-reconcile-csv.py merge`
@@ -278,6 +452,17 @@ Merge rules:
 - REVIEW rows: update AccountCode, AccountName, Contact, Confidence, Evidence from new proposals
 - Blank rows: update all AI columns if new proposals available
 - Preserve row order (user may have sorted manually)
+
+##### Research Insights
+
+**Best Practices:**
+- Preserve the original CSV order by reading all rows first, indexing updates by `StatementLineID`, and writing rows back in the exact input sequence.
+- Treat `APPROVE`, `EDIT`, and `SKIP` as immutable user decisions. `REVIEW` and blank rows remain AI-updatable.
+- Keep a diff summary of which rows changed during merge so each iteration is auditable before the file is copied back to Drive.
+
+**Edge Cases:**
+- If the user sorted rows manually, merge must still write back in the current visible order rather than re-sorting by confidence.
+- If a row is duplicated, abort before merge rather than guessing which copy is canonical.
 
 #### Phase 5: Update xero-explorer Skill
 
@@ -300,6 +485,15 @@ Add new workflow: `.claude/skills/xero-explorer/workflows/csv-review.md` with:
 - Iteration loop
 - Transition to POST phase
 
+##### Research Insights
+
+**Best Practices:**
+- Keep CSV review as a reconcile-mode decision unless discoverability clearly suffers; this avoids widening the skill intake surface more than necessary.
+- Document the human recovery path explicitly: use Sheets UI version history for rollback, and named versions for milestone checkpoints such as "v1 reviewed" or "ready to post".
+
+**Edge Cases:**
+- The Drive revisions API is useful for automation, but Google documents that revision listings for heavily edited Docs/Sheets/Slides can be incomplete, so UI version history is the safer human-facing rollback story.
+
 #### Phase 6: POST from CSV
 
 Enhance or create script for POST phase:
@@ -321,35 +515,88 @@ This generates POST bodies for all APPROVED + EDITED rows using:
 The actual POST execution remains in the existing reconcile workflow (Phase C)
 using API Explorer browser automation.
 
+##### Research Insights
+
+**Best Practices:**
+- Build POST bodies from seal facts plus reviewed CSV values, then show a stable preview hash before any write step so retries are easier to reason about.
+- Fail closed on unresolved contacts or account codes unless the row is intentionally `SKIP`.
+- Keep the POST export idempotent at the file level by producing the same queue for the same seal + CSV inputs.
+- Prefer one POST per statement line in v1. Xero's `SummarizeErrors=false` bulk mode can still return HTTP 200 while embedding per-element failures, which complicates recovery unnecessarily.
+- Carry a deterministic `Idempotency-Key` on every POST attempt. Xero caches idempotent responses for 6 minutes, rejects reuse with a different request, and recommends preserving the same key only for safe retries of the same payload.
+- Serialize writes. The state schema already requires "confirm -> write state -> POST -> write state", and Xero only allows 5 concurrent calls per tenant anyway, so there is no upside in parallel POSTs here.
+- Define success narrowly: a row becomes `posted` only after both a successful HTTP response and a returned `BankTransactionID`/OK status have been captured in the run log.
+
+**Implementation Details:**
+```json
+{
+  "queueHash": "sha256(...)",
+  "rows": 192,
+  "approvedRows": 180,
+  "editedRows": 12
+}
+```
+
+```text
+idempotency-key = sha256(queueHash + ":" + statementLineId)
+```
+
+```json
+{
+  "statementLineId": "uuid",
+  "idempotencyKey": "sha256(...)",
+  "attemptedAt": "2026-03-10T15:04:00+11:00",
+  "responseCode": 200,
+  "bankTransactionId": "uuid-or-null",
+  "result": "posted|retryable|errored"
+}
+```
+
+**Recovery Workflow:**
+1. `confirmed` row enters POST phase with persisted `idempotencyKey` and request hash.
+2. Browser/API Explorer submits exactly one BankTransaction payload.
+3. If response is `200` and includes a created resource identifier, write `postedAt` and mark `status=posted`.
+4. If response is `429`, pause for `Retry-After` seconds and retry the same payload with the same idempotency key.
+5. If response is `503 Organisation offline`, pause the tenant for ~5 minutes, save state, then resume from `confirmed` rows first.
+6. If response is `400` validation, mark the row `errored`, save the validation message, and continue or stop based on policy.
+7. If response is `401`, halt the run, save state, and require re-auth before any further writes.
+8. If the request outcome is unknown after timeout/network failure, retry with the same idempotency key inside the 6-minute window; after that window, verify via GET/history before generating a new key.
+
+**Edge Cases:**
+- A second POST run against the same CSV should detect the same queue hash and warn about duplicate-write risk before browser automation begins.
+- If contact lookup no longer resolves a user-edited Contact name, fall back to `Contact.Name` in the POST body and surface that explicitly in preview output.
+- Xero requires `Type`, `Contact`, at least one `LineItem`, and a BANK account on POST. Each line item must have a non-empty description, `Quantity > 0`, a non-zero amount, and an active `AccountCode`.
+- If a retry with the same idempotency key keeps returning the same cached internal error, inspect the resource with GET before generating a new key; otherwise we risk creating duplicates after the 6-minute expiry window.
+- The current `TaxType` heuristic (`INPUT` for SPEND, `OUTPUT` for RECEIVE`) is a useful default, but the plan should treat tax validation errors as expected recoverable failures because Xero validates tax/account compatibility strictly.
+
 ## Acceptance Criteria
 
 ### Quarter Seal
-- [ ] `manage-quarters.py seal Q FY` builds sealed cache with history, contacts, accounts
-- [ ] Seal includes statement line count + bank export count + match validation
-- [ ] Seal file has 0o600 permissions
-- [ ] Re-seal is a no-op if data hasn't changed (skip API call)
+- [x] `manage-quarters.py seal Q FY` builds sealed cache with history, contacts, accounts
+- [x] Seal includes statement line count + bank export count + match validation
+- [x] Seal file has 0o600 permissions
+- [x] Re-seal is a no-op if data hasn't changed (skip API call)
 - [ ] Seal is invalidated message when quarter data changes
 
 ### CSV Generation
-- [ ] Status column is first, StatementLineID is last
-- [ ] All 11 columns present per spec
-- [ ] Amounts are plain decimal, 2 places, minus for negative
-- [ ] Dates are YYYY-MM-DD
-- [ ] Evidence column explains each proposal
+- [x] Status column is first, StatementLineID is last
+- [x] All 11 columns present per spec
+- [x] Amounts are plain decimal, 2 places, minus for negative
+- [x] Dates are YYYY-MM-DD
+- [x] Evidence column explains each proposal
 - [ ] Confidence uses weighted scoring from confidence-weights.json
 - [ ] History match = +80, contact lookup = +70 (mutually exclusive)
-- [ ] Sorted: confidence desc, then account code, then date
+- [x] Sorted: confidence desc, then account code, then date
 - [ ] File copied to Google Drive inbox path
-- [ ] UTF-8, no BOM, \n line endings, comma-delimited, text fields quoted
+- [x] UTF-8, no BOM, \n line endings, comma-delimited, text fields quoted
 
 ### CSV Read-Back
-- [ ] Validates UUID format for StatementLineID
-- [ ] Validates AccountCode against chart of accounts
-- [ ] Validates row count against seal
-- [ ] Reports summary: counts by status, diffs vs original
-- [ ] Rejects rows with invalid data (clear error messages)
-- [ ] Handles empty rows gracefully (users add blank rows for grouping)
-- [ ] Strips leading apostrophes (Google Sheets text-force artifact)
+- [x] Validates UUID format for StatementLineID
+- [x] Validates AccountCode against chart of accounts
+- [x] Validates row count against seal
+- [x] Reports summary: counts by status, diffs vs original
+- [x] Rejects rows with invalid data (clear error messages)
+- [x] Handles empty rows gracefully (users add blank rows for grouping)
+- [x] Strips leading apostrophes (Google Sheets text-force artifact)
 
 ### Iteration Loop
 - [ ] APPROVE/EDIT/SKIP rows are never overwritten
@@ -364,6 +611,11 @@ using API Explorer browser automation.
 - [ ] Write interlock: requires `WRITE Q4 FY25` confirmation
 - [ ] Safe preview shows count + total amount before writing
 - [ ] POST errors logged with StatementLineID + reason
+- [ ] Row is marked `posted` only after HTTP success plus returned created-resource identifier
+- [ ] 429 handling honors `Retry-After` before retry
+- [ ] 503 Organisation Offline pauses and resumes from saved `confirmed` rows
+- [ ] Unknown timeout/network result retries with the same idempotency key inside the 6-minute window
+- [ ] Per-row POST result log includes StatementLineID, idempotency key, response code, and resulting BankTransactionID when available
 
 ### ADHD UX
 - [ ] Zero OAuth required during review phase
@@ -371,6 +623,19 @@ using API Explorer browser automation.
 - [ ] Can come back hours/days later -- CSV in Drive is the resume point
 - [ ] Interactive rapid-fire available as fallback for last ~10 stubborn items
 - [ ] Quarter seal means no surprise "session expired" blockers
+
+### Research Insights
+
+**Best Practices:**
+- Add test cases for exact header validation, duplicate IDs, blank grouping rows, apostrophe-prefixed IDs, and quoted commas in payees.
+- Add a degraded-history acceptance path so the feature remains usable when the history cache refresh fails.
+- Add a stable preview/hash acceptance check for POST export so repeated runs can be reasoned about safely.
+- Add a canary-write acceptance path: first real POST run should support a 1-3 row trial before processing the full approved set.
+
+**Edge Cases:**
+- Row-count validation should specify "non-empty statement rows" to stay compatible with user-inserted grouping rows.
+- Acceptance should explicitly cover status normalization (`approve` -> `APPROVE`) and rejection of unknown status values.
+- Acceptance should explicitly cover idempotent retry behavior inside the 6-minute window and safe operator guidance once that window has expired.
 
 ## Dependencies & Risks
 
@@ -384,6 +649,22 @@ using API Explorer browser automation.
 | Large CSV overwhelms Sheets | Slow performance | 287 rows is trivial for Sheets (handles 10M cells) |
 | Google Drive sync lag | CSV not yet synced when read back | Verify file mtime before reading; wait/retry if < 5s old |
 
+### Research Insights
+
+**Additional Risks:**
+- **Drive revision assumptions drift from reality** | Automation relies on incomplete history | Use Sheets UI version history for human rollback; treat Drive API revisions as supplemental only
+- **Duplicate write on rerun** | Same approved rows could be posted twice | Preview queue hash + explicit re-run warning before POST
+- **Idempotency key expiry** | Safe retry window closes after 6 minutes | Persist per-row idempotency metadata in the queue and switch to GET-based verification before any post-expiry retry
+- **Bulk POST ambiguity** | HTTP 200 can hide element-level failures when `SummarizeErrors=false` | Prefer one-row POSTs in v1, or require per-element response parsing before marking anything posted
+- **Browser success != API success** | UI flow could look complete without a durable created transaction | Require captured response code + BankTransactionID before marking `posted`
+- **Rate limit burst during reruns** | Resume loop could thrash on 429s | Serialize writes, honor `Retry-After`, and keep per-tenant retry state
+- **External vendor research leaks payees** | Financial metadata leaves local context | Keep explicit consent gate before any WebSearch step
+- **Granular-scope rollout changes auth copy** | Documentation and troubleshooting become stale | Date-stamp scope guidance and mention the March 2, 2026 Xero scope change explicitly
+
+**Mitigation Refinement:**
+- Prefer "stable file across two reads" to a single mtime check for synced Drive files.
+- Prefer seal invalidation messages that name the changed input (`statement-lines`, `accounts`, `history`, `bank account`) so recovery is obvious.
+
 ## Future Considerations
 
 - **Auto-seal on extract completion** -- run seal automatically after successful extraction
@@ -391,6 +672,17 @@ using API Explorer browser automation.
 - **Learning from corrections** -- diff EDIT rows against proposals to improve keyword rules
 - **Multi-quarter batch** -- generate CSVs for all pending quarters at once
 - **Direct API mode** -- when OAuth unblocks (GitHub #10), seal + POST become CLI calls
+
+### Research Insights
+
+**Best Practices:**
+- Keep Google Sheets API work out of v1 unless raw CSV review proves insufficient; API-driven dropdowns and protected ranges are attractive, but they add OAuth, permission, and operational complexity back into the flow.
+- Learning from `EDIT` rows is a strong v2 candidate because it compounds Nathan's own reconciliation history instead of importing generic heuristics.
+
+**Defer for Simplicity:**
+- Direct Drive or Sheets API automation
+- Per-row collaborative comments
+- Multi-quarter orchestration before single-quarter replay is stable
 
 ## Sources & References
 
@@ -407,6 +699,18 @@ using API Explorer browser automation.
 - **Preview-before-scale:** Datablist pattern -- show 10 rows first, proceed on explicit approval
 - **Xero JAX:** Xero's own auto-reconciliation (Nov 2025 beta) targets 80%+ automation with human review page -- we're building the same concept via CSV while PKCE is blocked
 - **CSV formatting:** UTF-8 no BOM, ISO 8601 dates, plain decimal amounts, hyphenated UUIDs safe from Sheets (multiple sources)
+
+### Official docs added during deepening (2026-03-10)
+
+- **Python `csv` module:** `newline=''` is required for file objects, `DictReader`/`DictWriter` are the right primitives here, `QUOTE_ALL` is available, and `field_size_limit()` exists if Evidence grows unexpectedly.
+- **Google Sheets limits:** Sheets supports up to **10 million cells** for both Sheets-created and CSV-imported spreadsheets, so the review file size is comfortably within platform limits.
+- **Google Sheets version history:** the Sheets UI supports viewing, restoring, copying, and naming earlier versions, which makes it the best rollback path for the human review loop.
+- **Google Drive revisions API:** revision listings for frequently edited Docs/Sheets/Slides can be incomplete, so API revision history should not be treated as the primary audit or recovery mechanism.
+- **Xero Finance API:** `GET /BankStatementsPlus/statements` requires `BankAccountID`, `FromDate`, and `ToDate`; the query period must be no more than 12 months and future end dates are rejected; `SummaryOnly` defaults to `true`.
+- **Xero OAuth scopes:** apps created on or after **March 2, 2026** use granular scopes, but `finance.bankstatementsplus.read` remains in the Finance API scope set that requires additional certification.
+- **Xero BankTransactions POST:** create/update requests require `Type`, `Contact`, at least one `LineItem`, and a BANK account; `LineAmountTypes` defaults to inclusive if omitted; `SummarizeErrors=false` can return HTTP 200 with element-level validation failures.
+- **Xero idempotent requests:** `Idempotency-Key` applies to POST/PUT/PATCH only, responses are cached for **6 minutes**, reused keys with different payloads return HTTP 400, and repeated cached internal errors should be followed by a GET verification step before retrying with a new key.
+- **Xero rate limits:** per tenant, Xero allows 5 concurrent calls in progress, 60 calls per minute, and returns `Retry-After` on minute/daily 429s; `503 Organisation offline` is documented as a temporary state where a ~5 minute retry interval is recommended.
 
 ### Internal References
 

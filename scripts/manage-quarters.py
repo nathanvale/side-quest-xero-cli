@@ -6,9 +6,20 @@ import sys
 import subprocess
 import re
 import shutil
+from hashlib import sha256
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from reconcile_roundtrip import (
+    atomic_write_json,
+    build_contact_lookup,
+    build_file_manifest,
+    json_sha256,
+    load_ndjson,
+    quarter_seal_filename,
+    statement_lines_semantic_fingerprint,
+)
 
 DATA_DIR = Path("data")
 QUARTERS_FILE = DATA_DIR / "quarters.json"
@@ -22,6 +33,7 @@ QUARTER_DEFS = {
 }
 MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 VALID_STATUSES = {"classified", "confirmed", "posted", "skipped", "errored"}
+SEAL_SCHEMA_VERSION = 1
 
 
 def quarter_dates(q: int, fy: int) -> tuple[str, str]:
@@ -64,6 +76,11 @@ def statement_lines_filename(q: int, fy: int) -> str:
 def state_filename(q: int, fy: int) -> str:
     fy2 = fy % 100
     return f".xero-explorer-state-fy{fy2:02d}-q{q}.json"
+
+
+def seal_path(q: int, fy: int) -> Path:
+    """Return the quarter seal path."""
+    return DATA_DIR / quarter_seal_filename(q, fy)
 
 
 def resolve_statefile_path(q: int, fy: int) -> str:
@@ -145,6 +162,111 @@ def save_quarters(data: dict):
         json.dump(data, f, indent=2)
         f.write("\n")
     os.rename(tmp, str(QUARTERS_FILE))
+
+
+def read_json_file(path: Path) -> dict:
+    """Read a JSON file and return an object payload."""
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
+
+
+def year_history_since(q: int, fy: int) -> str:
+    """Use a stable history window that covers the previous year plus the quarter."""
+    from_date, _ = quarter_dates(q, fy)
+    start_year = date.fromisoformat(from_date).year
+    return f"{start_year - 1}-01-01"
+
+
+def resolve_bank_account_id(statement_lines: list[dict]) -> str | None:
+    """Extract a bank account identifier from statement lines if present."""
+    values: set[str] = set()
+    for line in statement_lines:
+        candidates = [
+            line.get("bankAccountId"),
+            line.get("bank_account_id"),
+        ]
+        bank_account = line.get("bankAccount")
+        if isinstance(bank_account, dict):
+            candidates.extend(
+                [
+                    bank_account.get("accountId"),
+                    bank_account.get("AccountID"),
+                    bank_account.get("bankAccountId"),
+                ]
+            )
+        for candidate in candidates:
+            value = str(candidate or "").strip()
+            if value:
+                values.add(value)
+    if not values:
+        return None
+    if len(values) > 1:
+        raise ValueError(
+            f"statement lines contain multiple bankAccountId values: {', '.join(sorted(values))}"
+        )
+    return next(iter(values))
+
+
+def load_history_rows(since: str) -> tuple[list[dict], dict]:
+    """Fetch grouped history rows from the CLI and capture degraded-mode metadata."""
+    command = ["bun", "run", "xero-cli", "history", "--since", since, "--json"]
+    started_at = melbourne_now_iso()
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        payload = json.loads(result.stdout)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        rows = data.get("transactions") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("history command returned no transactions array")
+        return rows, {
+            "status": "ok",
+            "generatedAt": started_at,
+            "since": since,
+            "command": command,
+            "stdoutSha256": sha256(result.stdout.encode("utf-8")).hexdigest(),
+            "stderr": result.stderr.strip(),
+        }
+    except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as exc:
+        detail = ""
+        if isinstance(exc, subprocess.CalledProcessError):
+            detail = exc.stderr.strip() or exc.stdout.strip()
+        else:
+            detail = str(exc)
+        return [], {
+            "status": "degraded",
+            "generatedAt": started_at,
+            "since": since,
+            "command": command,
+            "error": detail or "history refresh failed",
+        }
+
+
+def seal_is_current(
+    existing_seal: dict,
+    statement_lines_manifest: dict,
+    accounts_manifest: dict,
+    bank_transactions_manifest: dict | None,
+) -> bool:
+    """Check whether an existing seal still matches its inputs."""
+    source_manifest = existing_seal.get("sourceManifest")
+    if not isinstance(source_manifest, dict):
+        return False
+    existing_statement_lines = source_manifest.get("statementLines")
+    existing_accounts = source_manifest.get("accounts")
+    if existing_statement_lines != statement_lines_manifest:
+        return False
+    if existing_accounts != accounts_manifest:
+        return False
+    existing_bank_transactions = source_manifest.get("bankTransactions")
+    return existing_bank_transactions == bank_transactions_manifest
 
 
 def count_qif_transactions(qif_path: str) -> int:
@@ -501,6 +623,140 @@ def gate_check(q: int, fy: int) -> int:
     return 0
 
 
+def seal_quarter(q: int, fy: int) -> int:
+    """Build a sealed quarter cache for offline classification and CSV review."""
+    gate_result = gate_check(q, fy)
+    if gate_result != 0:
+        return gate_result
+
+    fy2 = fy % 100
+    key = quarter_key(q, fy2)
+    from_date, to_date = quarter_dates(q, fy2)
+    statement_lines_path = DATA_DIR / statement_lines_filename(q, fy2)
+    accounts_path = DATA_DIR / "accounts.ndjson"
+    bank_transactions_path = DATA_DIR / "bank-transactions.ndjson"
+    target_path = seal_path(q, fy2)
+
+    if not statement_lines_path.exists():
+        print(f"ERROR: statement lines not found: {statement_lines_path}")
+        return 7
+    if not accounts_path.exists():
+        print(f"ERROR: accounts file not found: {accounts_path}")
+        return 8
+
+    statement_lines = load_ndjson(statement_lines_path)
+    if not statement_lines:
+        print(f"ERROR: statement lines file is empty: {statement_lines_path}")
+        return 9
+    accounts = load_ndjson(accounts_path)
+    if not accounts:
+        print(f"ERROR: accounts file is empty: {accounts_path}")
+        return 10
+
+    bank_transactions = (
+        load_ndjson(bank_transactions_path) if bank_transactions_path.exists() else []
+    )
+    contact_lookup, lookup_stats = build_contact_lookup(bank_transactions)
+    statement_lines_manifest = {
+        **build_file_manifest(statement_lines_path),
+        "semanticFingerprint": statement_lines_semantic_fingerprint(statement_lines),
+    }
+    accounts_manifest = build_file_manifest(accounts_path)
+    bank_transactions_manifest = (
+        build_file_manifest(bank_transactions_path)
+        if bank_transactions_path.exists()
+        else None
+    )
+
+    if target_path.exists():
+        try:
+            existing_seal = read_json_file(target_path)
+        except (OSError, json.JSONDecodeError, ValueError):
+            existing_seal = {}
+        if seal_is_current(
+            existing_seal,
+            statement_lines_manifest,
+            accounts_manifest,
+            bank_transactions_manifest,
+        ):
+            print(
+                f"Seal intact. Last sealed: {existing_seal.get('sealedAt', 'unknown')} ({target_path})"
+            )
+            return 0
+
+    bank_count = count_qif_transactions(str(DATA_DIR / qif_filename(q, fy2)))
+    statement_line_count = len(statement_lines)
+    counts_match = statement_line_count == bank_count
+    if not counts_match:
+        print(
+            f"ERROR: statement line count mismatch for {key}: {statement_line_count} lines vs {bank_count} bank transactions"
+        )
+        return 11
+
+    history_rows, history_meta = load_history_rows(year_history_since(q, fy2))
+    source_manifest = {
+        "statementLines": statement_lines_manifest,
+        "accounts": accounts_manifest,
+        "history": {
+            "status": history_meta.get("status"),
+            "generatedAt": history_meta.get("generatedAt"),
+            "since": history_meta.get("since"),
+            "rowCount": len(history_rows),
+            "sha256": json_sha256(history_rows),
+        },
+    }
+    if bank_transactions_manifest is not None:
+        source_manifest["bankTransactions"] = bank_transactions_manifest
+
+    try:
+        bank_account_id = resolve_bank_account_id(statement_lines)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 12
+
+    seal_status = "ok" if history_meta.get("status") == "ok" else "degraded"
+    seal = {
+        "schemaVersion": SEAL_SCHEMA_VERSION,
+        "createdBy": "scripts/manage-quarters.py seal",
+        "sealStatus": seal_status,
+        "sealInvalidationReason": None,
+        "sealedAt": melbourne_now_iso(),
+        "quarter": key,
+        "fromDate": from_date,
+        "toDate": to_date,
+        "bankAccountId": bank_account_id,
+        "statementLineCount": statement_line_count,
+        "bankExportCount": bank_count,
+        "countsMatch": counts_match,
+        "summaryOnly": True,
+        "statementLinesFile": str(statement_lines_path),
+        "sourceManifest": source_manifest,
+        "statementLines": statement_lines,
+        "accounts": accounts,
+        "contactLookup": {
+            "lookup": contact_lookup,
+            "stats": lookup_stats,
+        },
+        "history": {
+            **history_meta,
+            "rows": history_rows,
+        },
+    }
+
+    atomic_write_json(target_path, seal)
+    os.chmod(target_path, 0o600)
+
+    print(f"Seal written: {target_path}")
+    print(f"  Quarter: {key}")
+    print(f"  Statement lines: {statement_line_count}")
+    print(f"  Accounts: {len(accounts)}")
+    print(f"  Contact lookup entries: {lookup_stats.get('lookupEntries', 0)}")
+    print(f"  History rows: {len(history_rows)} ({seal_status})")
+    if seal_status == "degraded":
+        print(f"  History warning: {history_meta.get('error', 'history refresh failed')}")
+    return 0
+
+
 def next_action(q: int | None = None, fy: int | None = None):
     data = load_quarters()
     if not data["quarters"]:
@@ -567,6 +823,7 @@ def main():
         print("  status                  Show quarter status table")
         print("  mark-imported Q FY      Mark quarter as imported into Xero (e.g., 1 26)")
         print("  update-extraction Q FY COUNT  Record extraction result")
+        print("  seal Q FY               Build/update the quarter seal cache")
         print("  dates Q FY              Show FromDate/ToDate for a quarter")
         print("  filename Q FY           Show expected statement-lines filename")
         print("  qif-file Q FY           Show expected bank export QIF filename")
@@ -596,6 +853,9 @@ def main():
             count = parse_int_arg(4, "COUNT")
             if not update_extraction(q, fy, count):
                 sys.exit(1)
+        elif cmd == "seal":
+            q, fy = parse_int_arg(2, "Q"), parse_int_arg(3, "FY")
+            sys.exit(seal_quarter(q, fy))
         elif cmd == "dates":
             q, fy = parse_int_arg(2, "Q"), parse_int_arg(3, "FY")
             from_date, to_date = quarter_dates(q, fy)
