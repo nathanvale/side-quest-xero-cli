@@ -15,6 +15,7 @@ import { runHistory } from './commands/history'
 import { runInvoices } from './commands/invoices'
 import { runPayments } from './commands/payments'
 import { runReconcile } from './commands/reconcile'
+import { runReconcilePostQueue } from './commands/reconcile-post'
 import { runStatus } from './commands/status'
 import { runTransactions } from './commands/transactions'
 import type { ExitCode, OutputContext } from './output'
@@ -134,6 +135,13 @@ interface ReconcileCommand extends OutputContext {
 	readonly fromCsv: string | null
 }
 
+interface ReconcilePostCommand extends OutputContext {
+	readonly command: 'reconcile-post'
+	readonly execute: boolean
+	readonly queue: string
+	readonly postRun: string
+}
+
 type CliOptions =
 	| AuthCommand
 	| StatusCommand
@@ -144,6 +152,7 @@ type CliOptions =
 	| InvoicesCommand
 	| PaymentsCommand
 	| ReconcileCommand
+	| ReconcilePostCommand
 	| HelpCommand
 
 interface ParseCliError {
@@ -195,6 +204,12 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, Set<string>> = {
 	invoices: new Set(['--fields', '--status', '--type']),
 	payments: new Set(['--fields', '--since', '--until', '--page', '--limit']),
 	reconcile: new Set(['--execute', '--dry-run', '--from-csv']),
+	'reconcile-post': new Set([
+		'--execute',
+		'--dry-run',
+		'--queue',
+		'--post-run',
+	]),
 	help: new Set([]),
 	version: new Set([]),
 }
@@ -293,6 +308,8 @@ export function parseCli(argv: readonly string[]): ParseCliResult {
 	let lastQuarter = false
 	let execute = false
 	let fromCsv: string | null = null
+	let queuePath: string | null = null
+	let postRunPath: string | null = null
 	let contactRaw: string | null = null
 	let accountCodeRaw: string | null = null
 	let statusRaw: string | null = null
@@ -356,6 +373,18 @@ export function parseCli(argv: readonly string[]): ParseCliResult {
 			flag: string
 			assign: (v: string) => void
 		}> = [
+			{
+				flag: '--queue',
+				assign: (v) => {
+					queuePath = v
+				},
+			},
+			{
+				flag: '--post-run',
+				assign: (v) => {
+					postRunPath = v
+				},
+			},
 			{
 				flag: '--from-csv',
 				assign: (v) => {
@@ -753,6 +782,32 @@ export function parseCli(argv: readonly string[]): ParseCliResult {
 			},
 		}
 	}
+	if (commandToken === 'reconcile-post') {
+		if (!queuePath) {
+			return parseUsageError(
+				'Missing required --queue for reconcile-post',
+				json,
+				quiet,
+			)
+		}
+		if (!postRunPath) {
+			return parseUsageError(
+				'Missing required --post-run for reconcile-post',
+				json,
+				quiet,
+			)
+		}
+		return {
+			ok: true,
+			options: {
+				command: 'reconcile-post',
+				...outputMode,
+				execute,
+				queue: queuePath,
+				postRun: postRunPath,
+			},
+		}
+	}
 	if (commandToken === 'help') {
 		return {
 			ok: true,
@@ -889,6 +944,7 @@ function usageForTopic(topic: string | null): string {
 			'  invoices       List outstanding invoices (alias: inv)',
 			'  payments       List payments created in Xero (alias: pay)',
 			'  reconcile      Reconcile transactions from stdin or CSV (alias: rec)',
+			'  reconcile-post Execute a confirmed CSV post queue',
 			'  help [topic]   Show help (command, flags, aliases, version)',
 			'',
 			'Global Flags:',
@@ -1000,6 +1056,14 @@ function usageForTopic(topic: string | null): string {
 			'  --execute    Apply reconciliation (default is dry-run)',
 			'  --dry-run    Explicit dry-run mode',
 		].join('\n'),
+		'reconcile-post': [
+			'Usage: bun run xero-cli reconcile-post --queue <file> --post-run <file> [--execute|--dry-run]',
+			'Flags:',
+			'  --queue      Exported post queue JSON from scripts/read-reconcile-csv.py',
+			'  --post-run   Confirmed post-run JSON from begin-post-run',
+			'  --execute    Apply the queued BankTransactions (default is dry-run)',
+			'  --dry-run    Validate inputs and preview what would post',
+		].join('\n'),
 		help: ['Usage: bun run xero-cli help [topic]'].join('\n'),
 	}
 	if (commandHelp[normalizedTopic]) return commandHelp[normalizedTopic]
@@ -1020,6 +1084,7 @@ function usageForTopic(topic: string | null): string {
 		'  invoices       List outstanding invoices',
 		'  payments       List payments created in Xero',
 		'  reconcile      Reconcile transactions from stdin or CSV',
+		'  reconcile-post Execute a confirmed CSV post queue',
 		'  help [topic]   Show help',
 		'',
 		'Global Flags:',
@@ -1177,6 +1242,9 @@ export async function runCli(argv: readonly string[]): Promise<ExitCode> {
 					break
 				case 'reconcile':
 					exitCode = await runReconcile(ctx, options)
+					break
+				case 'reconcile-post':
+					exitCode = await runReconcilePostQueue(ctx, options)
 					break
 				case 'help': {
 					if (options.topic === 'version') {

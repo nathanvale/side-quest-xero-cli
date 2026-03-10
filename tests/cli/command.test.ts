@@ -188,6 +188,34 @@ describe('--fields flag routing', () => {
 			expect(result.options.command).toBe('payments')
 		}
 	})
+
+	it('accepts reconcile-post with required queue paths', () => {
+		const result = parseCli([
+			'node',
+			'xero-cli',
+			'reconcile-post',
+			'--queue',
+			'data/post-queue.json',
+			'--post-run',
+			'data/post-run.json',
+			'--execute',
+			'--json',
+		])
+		expect(result.ok).toBe(true)
+		if (result.ok) {
+			expect(result.options.command).toBe('reconcile-post')
+			expect(result.options).toHaveProperty('queue', 'data/post-queue.json')
+			expect(result.options).toHaveProperty('postRun', 'data/post-run.json')
+		}
+	})
+
+	it('requires queue and post-run paths for reconcile-post', () => {
+		const result = parseCli(['node', 'xero-cli', 'reconcile-post', '--json'])
+		expect(result.ok).toBe(false)
+		if (!result.ok) {
+			expect(result.message).toContain('Missing required --queue for reconcile-post')
+		}
+	})
 })
 
 describe('date range flag conflicts', () => {

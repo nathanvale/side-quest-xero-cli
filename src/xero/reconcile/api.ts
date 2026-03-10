@@ -289,6 +289,38 @@ export async function updateBankTransaction(
 	return assertValidBankTransactionResponse(response, { expectedTotal })
 }
 
+/** Create one BankTransaction and return the validated created record. */
+export async function createBankTransaction(
+	accessToken: string,
+	tenantId: string,
+	bankTransaction: Record<string, unknown>,
+	options: ReconcileApiOptions & { readonly idempotencyKey?: string },
+): Promise<BankTransactionRecord> {
+	const response = await xeroFetch<BankTransactionsResponse>(
+		'/BankTransactions',
+		{
+			method: 'POST',
+			body: JSON.stringify({
+				BankTransactions: [bankTransaction],
+			}),
+			headers: options.idempotencyKey
+				? {
+						'Idempotency-Key': options.idempotencyKey,
+					}
+				: undefined,
+		},
+		{
+			accessToken,
+			tenantId,
+			eventsConfig: options.eventsConfig,
+			onUnauthorized: async () => await loadValidTokens(options.eventsConfig),
+			onRetry: options.onRetry,
+			schema: BankTransactionsResponseSchema,
+		},
+	)
+	return assertValidBankTransactionResponse(response)
+}
+
 export async function fetchInvoicesById(
 	accessToken: string,
 	tenantId: string,

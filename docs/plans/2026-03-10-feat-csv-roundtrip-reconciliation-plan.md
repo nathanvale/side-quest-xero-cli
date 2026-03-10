@@ -92,7 +92,7 @@ Phase 2: CLASSIFY + REVIEW (offline, iterative)
   Result: reconcile-review-fy25-q4.csv (approved)
 
 Phase 3: POST (online, once per quarter)
-  Read final CSV -> validate -> POST to Xero via API Explorer
+  Read final CSV -> validate -> POST to Xero via xero-cli
   OAuth required: YES
   Duration: ~10 minutes for 287 items
   Result: all APPROVED items reconciled in Xero
@@ -512,8 +512,14 @@ This generates POST bodies for all APPROVED + EDITED rows using:
 - BankAccount.AccountID from seal
 - All other fields from sealed statement line data
 
-The actual POST execution remains in the existing reconcile workflow (Phase C)
-using API Explorer browser automation.
+The actual POST execution now runs through a dedicated CLI command:
+
+```bash
+bun run xero-cli reconcile-post \
+  --queue data/.post-queue-fy25-q4.json \
+  --post-run data/.post-run-fy25-q4.json \
+  --execute
+```
 
 ##### Research Insights
 
@@ -553,7 +559,7 @@ idempotency-key = sha256(queueHash + ":" + statementLineId)
 
 **Recovery Workflow:**
 1. `confirmed` row enters POST phase with persisted `idempotencyKey` and request hash.
-2. Browser/API Explorer submits exactly one BankTransaction payload.
+2. `xero-cli reconcile-post` submits exactly one BankTransaction payload.
 3. If response is `200` and includes a created resource identifier, write `postedAt` and mark `status=posted`.
 4. If response is `429`, pause for `Retry-After` seconds and retry the same payload with the same idempotency key.
 5. If response is `503 Organisation offline`, pause the tenant for ~5 minutes, save state, then resume from `confirmed` rows first.
@@ -562,7 +568,7 @@ idempotency-key = sha256(queueHash + ":" + statementLineId)
 8. If the request outcome is unknown after timeout/network failure, retry with the same idempotency key inside the 6-minute window; after that window, verify via GET/history before generating a new key.
 
 **Edge Cases:**
-- A second POST run against the same CSV should detect the same queue hash and warn about duplicate-write risk before browser automation begins.
+- A second POST run against the same CSV should detect the same queue hash and warn about duplicate-write risk before CLI execution begins.
 - If contact lookup no longer resolves a user-edited Contact name, fall back to `Contact.Name` in the POST body and surface that explicitly in preview output.
 - Xero requires `Type`, `Contact`, at least one `LineItem`, and a BANK account on POST. Each line item must have a non-empty description, `Quantity > 0`, a non-zero amount, and an active `AccountCode`.
 - If a retry with the same idempotency key keeps returning the same cached internal error, inspect the resource with GET before generating a new key; otherwise we risk creating duplicates after the 6-minute expiry window.

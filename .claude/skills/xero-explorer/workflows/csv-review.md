@@ -8,6 +8,7 @@ Use this when you want the lowest-friction reconciliation path:
 4. Let Nathan review in Sheets at his own pace
 5. Read back, merge updates, and iterate
 6. Export POST bodies only when the CSV is ready
+7. Execute the confirmed queue with `xero-cli`
 
 ## Why this path exists
 
@@ -113,3 +114,23 @@ python3 scripts/read-reconcile-csv.py \
 ```
 
 That writes the preview, queue hash, idempotency keys, and result log path before any real POST execution starts.
+
+Execute the queue through the CLI:
+
+```bash
+bun run xero-cli reconcile-post \
+  --queue "data/.post-queue-fy25-q4.json" \
+  --post-run "data/.post-run-fy25-q4.json" \
+  --execute
+```
+
+Use dry-run first if you want a final preview without writes:
+
+```bash
+bun run xero-cli reconcile-post \
+  --queue "data/.post-queue-fy25-q4.json" \
+  --post-run "data/.post-run-fy25-q4.json" \
+  --dry-run
+```
+
+This command reuses the CLI's normal auth/token handling, preserves the post-run state after every attempt, and appends one JSON log line per posted/retryable/errored row.
