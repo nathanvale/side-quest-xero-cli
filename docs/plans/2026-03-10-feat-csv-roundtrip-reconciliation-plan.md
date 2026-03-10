@@ -575,7 +575,7 @@ idempotency-key = sha256(queueHash + ":" + statementLineId)
 - [x] Seal includes statement line count + bank export count + match validation
 - [x] Seal file has 0o600 permissions
 - [x] Re-seal is a no-op if data hasn't changed (skip API call)
-- [ ] Seal is invalidated message when quarter data changes
+- [x] Seal is invalidated message when quarter data changes
 
 ### CSV Generation
 - [x] Status column is first, StatementLineID is last
@@ -583,8 +583,8 @@ idempotency-key = sha256(queueHash + ":" + statementLineId)
 - [x] Amounts are plain decimal, 2 places, minus for negative
 - [x] Dates are YYYY-MM-DD
 - [x] Evidence column explains each proposal
-- [ ] Confidence uses weighted scoring from confidence-weights.json
-- [ ] History match = +80, contact lookup = +70 (mutually exclusive)
+- [x] Confidence uses weighted scoring from confidence-weights.json
+- [x] History match = +80, contact lookup = +70 (mutually exclusive)
 - [x] Sorted: confidence desc, then account code, then date
 - [ ] File copied to Google Drive inbox path
 - [x] UTF-8, no BOM, \n line endings, comma-delimited, text fields quoted
@@ -599,15 +599,15 @@ idempotency-key = sha256(queueHash + ":" + statementLineId)
 - [x] Strips leading apostrophes (Google Sheets text-force artifact)
 
 ### Iteration Loop
-- [ ] APPROVE/EDIT/SKIP rows are never overwritten
-- [ ] REVIEW rows get updated proposals + evidence
-- [ ] Blank rows may get improved proposals
-- [ ] Row order preserved after merge
+- [x] APPROVE/EDIT/SKIP rows are never overwritten
+- [x] REVIEW rows get updated proposals + evidence
+- [x] Blank rows may get improved proposals
+- [x] Row order preserved after merge
 - [ ] Google Drive version history provides undo (no manual versioning needed)
 
 ### POST Phase
-- [ ] Reads final CSV, filters to APPROVE + EDIT status only
-- [ ] Generates correct POST bodies per matching-rules.md templates
+- [x] Reads final CSV, filters to APPROVE + EDIT status only
+- [x] Generates correct POST bodies per matching-rules.md templates
 - [ ] Write interlock: requires `WRITE Q4 FY25` confirmation
 - [ ] Safe preview shows count + total amount before writing
 - [ ] POST errors logged with StatementLineID + reason

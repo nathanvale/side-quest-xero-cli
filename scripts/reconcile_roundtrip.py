@@ -12,6 +12,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIDENCE_WEIGHTS_PATH = (
+    REPO_ROOT / ".claude/skills/xero-explorer/references/confidence-weights.json"
+)
 REVIEW_FIELDNAMES = [
     "Status",
     "Date",
@@ -181,16 +185,40 @@ def amount_to_csv(amount: float | int | str | None) -> str:
 
 def confidence_band(score: int) -> str:
     """Map a numeric proposal score to a stable confidence band."""
-    if score >= 80:
-        return "high"
-    if score >= 55:
-        return "medium"
-    return "low"
+    return confidence_band_from_weights(score, load_confidence_weights())
 
 
 def confidence_cell(score: int) -> str:
     """Render the CSV confidence cell with band and numeric score."""
     return f"{confidence_band(score)} ({score})"
+
+
+def load_confidence_weights(
+    path: str | Path = DEFAULT_CONFIDENCE_WEIGHTS_PATH,
+) -> dict[str, Any]:
+    """Load confidence weights from the shared xero-explorer reference file."""
+    target = Path(path)
+    with target.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"confidence weights must be a JSON object: {target}")
+    return payload
+
+
+def confidence_band_from_weights(score: int, weights: dict[str, Any]) -> str:
+    """Map a numeric score to a band using the configured thresholds."""
+    bands = weights.get("bands")
+    if not isinstance(bands, dict):
+        raise ValueError("confidence weights missing 'bands'")
+    for band_name in ("high", "medium", "low"):
+        band = bands.get(band_name)
+        if not isinstance(band, dict):
+            continue
+        minimum = int(band.get("min", 0))
+        maximum = int(band.get("max", 0))
+        if minimum <= score <= maximum:
+            return band_name
+    raise ValueError(f"score {score} did not match any configured confidence band")
 
 
 def load_accounts_map(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -368,6 +396,7 @@ def classify_statement_line(
     history_rows: list[dict[str, Any]],
     contact_lookup: dict[str, dict[str, Any]],
     accounts: dict[str, dict[str, Any]],
+    confidence_weights: dict[str, Any],
 ) -> dict[str, str]:
     """Propose a CSV review row from one sealed statement line."""
     payee = str(statement_line.get("payee", "")).strip()
@@ -376,9 +405,12 @@ def classify_statement_line(
     direction = "RECEIVE" if amount > 0 else "SPEND"
     abs_amount = abs(amount)
     lookup_entry = contact_lookup.get(normalized_payee.lower())
+    scoring = confidence_weights.get("scoring")
+    if not isinstance(scoring, dict):
+        raise ValueError("confidence weights missing 'scoring'")
 
     best_history: dict[str, Any] | None = None
-    best_score = 0
+    best_score = int(scoring.get("base", 0))
     conflict = False
     candidate_codes: set[str] = set()
 
@@ -390,31 +422,40 @@ def classify_statement_line(
         if not matches:
             continue
 
-        total_score = int(score * 75)
+        total_score = int(scoring.get("cliHistoryMatch", 80))
         amount_min = float(row.get("AmountMin", 0) or 0)
         amount_max = float(row.get("AmountMax", 0) or 0)
         if amount_min <= abs_amount <= amount_max:
-            total_score += 10
+            total_score += int(scoring.get("amountWithinHistoricalRangeOrTolerance", 15))
         else:
-            total_score -= 8
-        total_score += min(int(row.get("Count", 0) or 0), 5) * 2
-        if lookup_entry and lookup_entry.get("ContactName") == contact_name:
-            total_score += 10
+            total_score += int(scoring.get("amountAnomalyOutsideTolerance", -25))
+        if int(row.get("Count", 0) or 0) >= 3:
+            total_score += int(scoring.get("recurrenceCountGte3", 10))
         candidate_codes.add(str(row.get("AccountCode", "")).strip())
+        if len(candidate_codes) == 1:
+            total_score += int(scoring.get("stableHistoricalAccountCode", 10))
         if best_history is None or total_score > best_score:
             best_history = row
             best_score = total_score
 
     if len(candidate_codes) > 1:
         conflict = True
-        best_score = max(best_score - 20, 25)
+        best_score = max(
+            best_score + int(scoring.get("ambiguousVendorWithoutHistory", -15)),
+            0,
+        )
 
     rule_code, rule_category, rule_score, rule_evidence, rule_contact = keyword_classify(
         payee, amount
     )
+    contact_only_score = int(scoring.get("base", 0))
+    if lookup_entry:
+        contact_only_score += int(scoring.get("exactNormalizedPayeeMatch", 70))
 
     if normalized_payee in GENERIC_PAYEES:
-        best_score = min(best_score, 45)
+        penalty = int(scoring.get("genericPayeeToken", -20))
+        best_score += penalty
+        contact_only_score += penalty
 
     if best_history and best_score >= rule_score:
         account_code = str(best_history.get("AccountCode", "")).strip()
@@ -437,7 +478,7 @@ def classify_statement_line(
         if conflict:
             evidence.append("history:conflict")
         score = max(min(best_score, 99), 0)
-        band = confidence_band(score)
+        band = confidence_band_from_weights(score, confidence_weights)
         evidence.append(f"band:{band}")
         account_name = accounts.get(account_code, {}).get("name", "")
         return {
@@ -454,8 +495,27 @@ def classify_statement_line(
             "StatementLineID": str(statement_line.get("statementLineId", "")).strip(),
         }
 
+    if lookup_entry and contact_only_score >= rule_score:
+        contact_name = str(lookup_entry.get("ContactName", "")).strip()
+        score = max(min(contact_only_score, 99), 0)
+        band = confidence_band_from_weights(score, confidence_weights)
+        evidence = ["contact:exact-normalized-match", f"band:{band}"]
+        return {
+            "Status": "",
+            "Date": str(statement_line.get("postedDate", "")).strip()[:10],
+            "Payee": payee,
+            "Amount": amount_to_csv(amount),
+            "Type": direction,
+            "AccountCode": "",
+            "AccountName": "",
+            "Contact": contact_name,
+            "Confidence": confidence_cell(score),
+            "Evidence": "|".join(evidence),
+            "StatementLineID": str(statement_line.get("statementLineId", "")).strip(),
+        }
+
     score = max(min(rule_score, 99), 0)
-    band = confidence_band(score)
+    band = confidence_band_from_weights(score, confidence_weights)
     account_name = accounts.get(rule_code, {}).get("name", "") if rule_code else ""
     evidence = [*rule_evidence, f"band:{band}"]
     return {
@@ -481,8 +541,15 @@ def build_review_rows_from_seal(seal: dict[str, Any]) -> list[dict[str, str]]:
     history_rows = seal.get("history", {}).get("rows") or []
     contact_lookup = seal.get("contactLookup", {}).get("lookup") or {}
     accounts = load_accounts_map(seal.get("accounts") or [])
+    confidence_weights = load_confidence_weights()
     rows = [
-        classify_statement_line(item, history_rows, contact_lookup, accounts)
+        classify_statement_line(
+            item,
+            history_rows,
+            contact_lookup,
+            accounts,
+            confidence_weights,
+        )
         for item in statement_lines
         if not bool(item.get("isReconciled"))
     ]

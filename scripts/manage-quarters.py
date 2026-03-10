@@ -269,6 +269,25 @@ def seal_is_current(
     return existing_bank_transactions == bank_transactions_manifest
 
 
+def describe_seal_invalidation(
+    existing_seal: dict,
+    statement_lines_manifest: dict,
+    accounts_manifest: dict,
+    bank_transactions_manifest: dict | None,
+) -> str:
+    """Explain why an existing seal must be rebuilt."""
+    source_manifest = existing_seal.get("sourceManifest")
+    if not isinstance(source_manifest, dict):
+        return "missing source manifest"
+    if source_manifest.get("statementLines") != statement_lines_manifest:
+        return "statement-lines changed"
+    if source_manifest.get("accounts") != accounts_manifest:
+        return "accounts changed"
+    if source_manifest.get("bankTransactions") != bank_transactions_manifest:
+        return "bank-transactions changed"
+    return "history refresh required"
+
+
 def count_qif_transactions(qif_path: str) -> int:
     """Count transactions in a QIF file."""
     result = subprocess.run(
@@ -683,6 +702,15 @@ def seal_quarter(q: int, fy: int) -> int:
                 f"Seal intact. Last sealed: {existing_seal.get('sealedAt', 'unknown')} ({target_path})"
             )
             return 0
+        invalidation_reason = describe_seal_invalidation(
+            existing_seal,
+            statement_lines_manifest,
+            accounts_manifest,
+            bank_transactions_manifest,
+        )
+        print(f"Seal invalidated: {invalidation_reason}. Rebuilding {target_path}.")
+    else:
+        invalidation_reason = None
 
     bank_count = count_qif_transactions(str(DATA_DIR / qif_filename(q, fy2)))
     statement_line_count = len(statement_lines)
@@ -719,7 +747,7 @@ def seal_quarter(q: int, fy: int) -> int:
         "schemaVersion": SEAL_SCHEMA_VERSION,
         "createdBy": "scripts/manage-quarters.py seal",
         "sealStatus": seal_status,
-        "sealInvalidationReason": None,
+        "sealInvalidationReason": invalidation_reason,
         "sealedAt": melbourne_now_iso(),
         "quarter": key,
         "fromDate": from_date,
