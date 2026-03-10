@@ -261,6 +261,44 @@ class ReconcileRoundTripTests(unittest.TestCase):
             self.assertTrue(rows[0]["Confidence"].startswith("high"))
             self.assertEqual(rows[1]["Status"], "")
 
+    def test_export_can_copy_csv_to_google_drive_inbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seal_path = root / "seal.json"
+            csv_path = root / "review.csv"
+            drive_inbox = root / "drive"
+            drive_inbox.mkdir()
+            seal = {
+                "quarter": "Q4 FY25",
+                "statementLines": [
+                    {
+                        "statementLineId": "11111111-1111-1111-1111-111111111111",
+                        "postedDate": "2025-04-01",
+                        "payee": "Github Inc",
+                        "amount": -49.99,
+                        "isReconciled": False,
+                    }
+                ],
+                "accounts": [{"Code": "495", "Name": "Software", "Status": "ACTIVE"}],
+                "contactLookup": {"lookup": {}},
+                "history": {"rows": []},
+            }
+            seal_path.write_text(json.dumps(seal), encoding="utf-8")
+
+            result = self.export_module.main(
+                [
+                    "--seal",
+                    str(seal_path),
+                    "--output",
+                    str(csv_path),
+                    "--copy-to-google-drive",
+                    "--google-drive-inbox",
+                    str(drive_inbox),
+                ]
+            )
+            self.assertEqual(result, 0)
+            self.assertTrue((drive_inbox / "review.csv").exists())
+
     def test_export_uses_contact_lookup_score_without_history_weight_stacking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -598,6 +636,171 @@ class ReconcileRoundTripTests(unittest.TestCase):
             self.assertEqual(second["body"]["Type"], "RECEIVE")
             self.assertEqual(second["body"]["Contact"], {"Name": "Custom Contact"})
             self.assertEqual(second["body"]["LineItems"][0]["TaxType"], "OUTPUT")
+
+    def test_begin_post_run_requires_exact_interlock_and_writes_preview_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue_path = root / "queue.json"
+            state_path = root / "post-run.json"
+            queue = {
+                "quarter": "Q4 FY25",
+                "queueHash": "queue-hash",
+                "rows": 2,
+                "approvedRows": 1,
+                "editedRows": 1,
+                "totalAbsAmount": 199.99,
+                "items": [
+                    {
+                        "statementLineId": "11111111-1111-1111-1111-111111111111",
+                        "body": {"Type": "SPEND"},
+                    },
+                    {
+                        "statementLineId": "22222222-2222-2222-2222-222222222222",
+                        "body": {"Type": "RECEIVE"},
+                    },
+                ],
+            }
+            queue_path.write_text(json.dumps(queue), encoding="utf-8")
+
+            bad_buffer = io.StringIO()
+            with redirect_stdout(bad_buffer):
+                bad_result = self.read_module.cmd_begin_post_run(
+                    str(queue_path), str(state_path), "WRITE FY25"
+                )
+            bad_payload = json.loads(bad_buffer.getvalue())
+            self.assertEqual(bad_result, 2)
+            self.assertFalse(bad_payload["ok"])
+
+            good_buffer = io.StringIO()
+            with redirect_stdout(good_buffer):
+                good_result = self.read_module.cmd_begin_post_run(
+                    str(queue_path), str(state_path), "WRITE Q4 FY25"
+                )
+            good_payload = json.loads(good_buffer.getvalue())
+            self.assertEqual(good_result, 0)
+            self.assertTrue(good_payload["ok"])
+            self.assertEqual(good_payload["preview"]["rows"], 2)
+
+            with state_path.open(encoding="utf-8") as handle:
+                state = json.load(handle)
+            self.assertEqual(state["quarter"], "Q4 FY25")
+            self.assertEqual(len(state["items"]), 2)
+            self.assertEqual(
+                state["items"]["11111111-1111-1111-1111-111111111111"]["status"],
+                "confirmed",
+            )
+
+    def test_record_post_result_handles_success_and_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "post-run.json"
+            log_path = root / "post-run.log.ndjson"
+            state = {
+                "schemaVersion": 1,
+                "quarter": "Q4 FY25",
+                "queueHash": "queue-hash",
+                "startedAt": "2026-03-10T10:00:00+11:00",
+                "writeInterlock": "WRITE Q4 FY25",
+                "preview": {"rows": 2, "approvedRows": 1, "editedRows": 1, "totalAbsAmount": 199.99},
+                "logFile": str(log_path),
+                "items": {
+                    "11111111-1111-1111-1111-111111111111": {
+                        "statementLineId": "11111111-1111-1111-1111-111111111111",
+                        "status": "confirmed",
+                        "confirmedAt": "2026-03-10T10:00:00+11:00",
+                        "idempotencyKey": "idem-1",
+                        "requestHash": "hash-1",
+                        "responseCode": None,
+                        "bankTransactionId": None,
+                        "errorReason": None,
+                        "postedAt": None,
+                        "nextRetryAt": None,
+                        "tenantPauseUntil": None,
+                        "sameKeyRetryUntil": None,
+                    },
+                    "22222222-2222-2222-2222-222222222222": {
+                        "statementLineId": "22222222-2222-2222-2222-222222222222",
+                        "status": "confirmed",
+                        "confirmedAt": "2026-03-10T10:00:00+11:00",
+                        "idempotencyKey": "idem-2",
+                        "requestHash": "hash-2",
+                        "responseCode": None,
+                        "bankTransactionId": None,
+                        "errorReason": None,
+                        "postedAt": None,
+                        "nextRetryAt": None,
+                        "tenantPauseUntil": None,
+                        "sameKeyRetryUntil": None,
+                    },
+                },
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            success_buffer = io.StringIO()
+            with redirect_stdout(success_buffer):
+                success_result = self.read_module.cmd_record_post_result(
+                    str(state_path),
+                    "11111111-1111-1111-1111-111111111111",
+                    200,
+                    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                    None,
+                    None,
+                    None,
+                )
+            success_payload = json.loads(success_buffer.getvalue())
+            self.assertEqual(success_result, 0)
+            self.assertEqual(success_payload["status"], "posted")
+
+            retry_buffer = io.StringIO()
+            with redirect_stdout(retry_buffer):
+                retry_result = self.read_module.cmd_record_post_result(
+                    str(state_path),
+                    "22222222-2222-2222-2222-222222222222",
+                    429,
+                    None,
+                    "rate limited",
+                    15,
+                    None,
+                )
+            retry_payload = json.loads(retry_buffer.getvalue())
+            self.assertEqual(retry_result, 0)
+            self.assertEqual(retry_payload["status"], "confirmed")
+            self.assertIsNotNone(retry_payload["nextRetryAt"])
+
+            offline_buffer = io.StringIO()
+            with redirect_stdout(offline_buffer):
+                offline_result = self.read_module.cmd_record_post_result(
+                    str(state_path),
+                    "22222222-2222-2222-2222-222222222222",
+                    503,
+                    None,
+                    "Organisation Offline",
+                    None,
+                    None,
+                )
+            offline_payload = json.loads(offline_buffer.getvalue())
+            self.assertEqual(offline_result, 0)
+            self.assertEqual(offline_payload["status"], "confirmed")
+            self.assertIsNotNone(offline_payload["tenantPauseUntil"])
+
+            unknown_buffer = io.StringIO()
+            with redirect_stdout(unknown_buffer):
+                unknown_result = self.read_module.cmd_record_post_result(
+                    str(state_path),
+                    "22222222-2222-2222-2222-222222222222",
+                    None,
+                    None,
+                    "socket timeout",
+                    None,
+                    "timeout",
+                )
+            unknown_payload = json.loads(unknown_buffer.getvalue())
+            self.assertEqual(unknown_result, 0)
+            self.assertEqual(unknown_payload["status"], "confirmed")
+            self.assertIsNotNone(unknown_payload["sameKeyRetryUntil"])
+
+            log_lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(log_lines), 4)
 
 
 if __name__ == "__main__":

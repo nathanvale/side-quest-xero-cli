@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,11 @@ from reconcile_roundtrip import (
     load_accounts_map,
     load_ndjson,
     write_review_csv,
+)
+
+DEFAULT_GOOGLE_DRIVE_INBOX = (
+    Path.home()
+    / "Library/CloudStorage/GoogleDrive-hi@nathanvale.com/My Drive/00 Inbox"
 )
 
 
@@ -81,6 +87,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--seal", help="Path to a quarter seal JSON file")
     parser.add_argument("--output", help="Path to the review CSV to write")
+    parser.add_argument(
+        "--copy-to-google-drive",
+        action="store_true",
+        help="Copy the generated CSV to the mounted Google Drive inbox path",
+    )
+    parser.add_argument(
+        "--google-drive-inbox",
+        default=str(DEFAULT_GOOGLE_DRIVE_INBOX),
+        help="Mounted Google Drive inbox directory used with --copy-to-google-drive",
+    )
     args = parser.parse_args(argv)
 
     if args.seal:
@@ -112,6 +128,13 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = build_review_rows_from_seal(seal)
     write_review_csv(args.output, rows)
+    drive_copy_path: Path | None = None
+    if args.copy_to_google_drive:
+        inbox = Path(args.google_drive_inbox)
+        if not inbox.exists():
+            raise ValueError(f"Google Drive inbox does not exist: {inbox}")
+        drive_copy_path = inbox / Path(args.output).name
+        shutil.copy2(args.output, drive_copy_path)
 
     accounts = load_accounts_map(seal.get("accounts") or [])
     high = sum(1 for row in rows if row["Confidence"].startswith("high"))
@@ -125,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  High confidence: {high}")
     print(f"  Medium confidence: {medium}")
     print(f"  Low confidence: {low}")
+    if drive_copy_path is not None:
+        print(f"  Google Drive copy: {drive_copy_path}")
+        print("  Undo path: use Google Sheets version history for reviewed iterations.")
     return 0
 
 

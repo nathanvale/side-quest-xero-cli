@@ -3,6 +3,16 @@
 Match unreconciled statement lines to accounts and POST reconciliation entries
 through the Xero API Explorer browser.
 
+CSV-first is now the recommended review path for most quarters:
+- Build the seal
+- Export the review CSV
+- Copy to Google Drive
+- Review in Sheets over time
+- Read back / merge iterations
+- Use rapid-fire only as a fallback for the final stubborn items
+
+See [csv-review.md](csv-review.md) for the full offline review loop.
+
 ## Context
 
 Read before proceeding:

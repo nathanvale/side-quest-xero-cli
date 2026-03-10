@@ -115,6 +115,7 @@ The full reconciliation pipeline for a quarter:
 3. **Import** -- Upload QIF into Xero (manual via Xero UI; API import not yet available publicly -- Bank Feeds API is partner-only)
 4. **Extract** -- Pull accounting data via `xero-cli` + statement lines via `agent-browser` (`/xero-explorer extract`)
 5. **Reconcile** -- Match and POST via agent-browser (`/xero-explorer reconcile`)
+6. **CSV review** -- Prefer the offline CSV loop for review and iteration before POST (`workflows/csv-review.md`)
 
 **Why extraction can't be skipped:** The QIF bank export has the raw transactions, but extraction from Xero confirms they're actually imported and visible to Xero's reconciliation engine. Extraction provides:
 - **Validation** -- QIF txn count == statement lines count means the import worked correctly
@@ -198,10 +199,12 @@ Then ask: What would you like to do?
 Before starting reconciliation, read:
 - [references/matching-rules.md](references/matching-rules.md) -- categorization rules, contact lookup, POST templates
 - [references/state-schema.md](references/state-schema.md) -- state file lifecycle and write discipline
+- [workflows/csv-review.md](workflows/csv-review.md) -- sealed CSV round-trip via Google Sheets
 
 **Routing:**
 - `extract`/`pull` -> [Extract](workflows/extract.md)
 - `reconcile`/`match` -> [Reconcile](workflows/reconcile.md)
+- `csv`/`sheet`/`spreadsheet`/`review loop` -> [CSV Review](workflows/csv-review.md)
 - `status`/`progress` -> Status Check (below)
 - `quarters` -> Quarter status (below)
 - `new quarter`/`setup quarter`/`download qif` -> [New quarter setup](workflows/new-quarter.md)

@@ -586,7 +586,7 @@ idempotency-key = sha256(queueHash + ":" + statementLineId)
 - [x] Confidence uses weighted scoring from confidence-weights.json
 - [x] History match = +80, contact lookup = +70 (mutually exclusive)
 - [x] Sorted: confidence desc, then account code, then date
-- [ ] File copied to Google Drive inbox path
+- [x] File copied to Google Drive inbox path
 - [x] UTF-8, no BOM, \n line endings, comma-delimited, text fields quoted
 
 ### CSV Read-Back
@@ -603,26 +603,26 @@ idempotency-key = sha256(queueHash + ":" + statementLineId)
 - [x] REVIEW rows get updated proposals + evidence
 - [x] Blank rows may get improved proposals
 - [x] Row order preserved after merge
-- [ ] Google Drive version history provides undo (no manual versioning needed)
+- [x] Google Drive version history provides undo (no manual versioning needed)
 
 ### POST Phase
 - [x] Reads final CSV, filters to APPROVE + EDIT status only
 - [x] Generates correct POST bodies per matching-rules.md templates
-- [ ] Write interlock: requires `WRITE Q4 FY25` confirmation
-- [ ] Safe preview shows count + total amount before writing
-- [ ] POST errors logged with StatementLineID + reason
-- [ ] Row is marked `posted` only after HTTP success plus returned created-resource identifier
-- [ ] 429 handling honors `Retry-After` before retry
-- [ ] 503 Organisation Offline pauses and resumes from saved `confirmed` rows
-- [ ] Unknown timeout/network result retries with the same idempotency key inside the 6-minute window
-- [ ] Per-row POST result log includes StatementLineID, idempotency key, response code, and resulting BankTransactionID when available
+- [x] Write interlock: requires `WRITE Q4 FY25` confirmation
+- [x] Safe preview shows count + total amount before writing
+- [x] POST errors logged with StatementLineID + reason
+- [x] Row is marked `posted` only after HTTP success plus returned created-resource identifier
+- [x] 429 handling honors `Retry-After` before retry
+- [x] 503 Organisation Offline pauses and resumes from saved `confirmed` rows
+- [x] Unknown timeout/network result retries with the same idempotency key inside the 6-minute window
+- [x] Per-row POST result log includes StatementLineID, idempotency key, response code, and resulting BankTransactionID when available
 
 ### ADHD UX
-- [ ] Zero OAuth required during review phase
-- [ ] Can start reviewing immediately after CSV is generated
-- [ ] Can come back hours/days later -- CSV in Drive is the resume point
-- [ ] Interactive rapid-fire available as fallback for last ~10 stubborn items
-- [ ] Quarter seal means no surprise "session expired" blockers
+- [x] Zero OAuth required during review phase
+- [x] Can start reviewing immediately after CSV is generated
+- [x] Can come back hours/days later -- CSV in Drive is the resume point
+- [x] Interactive rapid-fire available as fallback for last ~10 stubborn items
+- [x] Quarter seal means no surprise "session expired" blockers
 
 ### Research Insights
 

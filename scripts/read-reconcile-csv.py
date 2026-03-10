@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import hashlib
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +71,78 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     export_parser.add_argument("csv_path", help="Path to the review CSV")
     export_parser.add_argument("--seal", required=True, help="Quarter seal JSON path")
     export_parser.add_argument("--output", required=True, help="Path to write the POST queue JSON")
+
+    begin_parser = subparsers.add_parser(
+        "begin-post-run",
+        help="Write a confirmed post-run state after explicit interlock confirmation",
+    )
+    begin_parser.add_argument("queue_path", help="Path to the exported POST queue JSON")
+    begin_parser.add_argument("--output", required=True, help="Path to write the post-run state JSON")
+    begin_parser.add_argument(
+        "--confirm",
+        required=True,
+        help='Exact confirmation phrase, for example "WRITE Q4 FY25"',
+    )
+
+    record_parser = subparsers.add_parser(
+        "record-post-result",
+        help="Apply one POST result to the post-run state and append the run log",
+    )
+    record_parser.add_argument("state_path", help="Path to the post-run state JSON")
+    record_parser.add_argument("--statement-line-id", required=True, help="StatementLineID being recorded")
+    record_parser.add_argument("--response-code", type=int, help="HTTP response code")
+    record_parser.add_argument("--bank-transaction-id", help="Returned BankTransactionID on success")
+    record_parser.add_argument("--error-reason", help="Validation or transport error details")
+    record_parser.add_argument("--retry-after-seconds", type=int, help="Retry-After seconds for 429s")
+    record_parser.add_argument(
+        "--transport-error",
+        choices=("timeout", "network"),
+        help="Record an unknown transport outcome that should retry the same idempotency key",
+    )
     return parser.parse_args(argv)
+
+
+def now_iso() -> str:
+    """Return an ISO8601 timestamp with local timezone offset."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def iso_plus_seconds(iso_value: str, seconds: int) -> str:
+    """Return a timestamp offset by some seconds."""
+    return (
+        datetime.fromisoformat(iso_value) + timedelta(seconds=seconds)
+    ).isoformat(timespec="seconds")
+
+
+def load_post_queue(path: str | Path) -> dict[str, Any]:
+    """Load the exported POST queue JSON."""
+    with Path(path).open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError("post queue must contain a JSON object")
+    if not isinstance(payload.get("items"), list):
+        raise ValueError("post queue is missing items")
+    return payload
+
+
+def load_post_run_state(path: str | Path) -> dict[str, Any]:
+    """Load the post-run state JSON."""
+    with Path(path).open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError("post-run state must contain a JSON object")
+    if not isinstance(payload.get("items"), dict):
+        raise ValueError("post-run state is missing items")
+    return payload
+
+
+def append_jsonl(path: str | Path, payload: dict[str, Any]) -> None:
+    """Append one JSON line to an audit log."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True))
+        handle.write("\n")
 
 
 def validate_header(fieldnames: list[str] | None) -> list[str]:
@@ -539,6 +612,199 @@ def cmd_export_post_bodies(csv_path: str, seal_path: str, output_path: str) -> i
         return 2
 
 
+def cmd_begin_post_run(queue_path: str, output_path: str, confirm: str) -> int:
+    """Create the persisted post-run state after explicit write confirmation."""
+    try:
+        queue = load_post_queue(queue_path)
+        quarter = str(queue.get("quarter", "")).strip()
+        expected_confirm = f"WRITE {quarter}"
+        if confirm != expected_confirm:
+            payload = {
+                "ok": False,
+                "queuePath": queue_path,
+                "outputPath": output_path,
+                "errors": [
+                    {
+                        "code": "confirm-mismatch",
+                        "message": f'confirmation phrase must be exactly "{expected_confirm}"',
+                    }
+                ],
+            }
+            print(json.dumps(payload, indent=2))
+            return 2
+
+        started_at = now_iso()
+        state_path = Path(output_path)
+        log_path = state_path.with_suffix(".log.ndjson")
+        items: dict[str, Any] = {}
+        for item in queue.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            statement_line_id = str(item.get("statementLineId", "")).strip()
+            if not statement_line_id:
+                continue
+            body = item.get("body") or {}
+            items[statement_line_id] = {
+                "statementLineId": statement_line_id,
+                "status": "confirmed",
+                "confirmedAt": started_at,
+                "idempotencyKey": hashlib.sha256(
+                    f"{queue.get('queueHash', '')}:{statement_line_id}".encode("utf-8")
+                ).hexdigest(),
+                "requestHash": json_sha256(body),
+                "responseCode": None,
+                "bankTransactionId": None,
+                "errorReason": None,
+                "postedAt": None,
+                "nextRetryAt": None,
+                "tenantPauseUntil": None,
+                "sameKeyRetryUntil": None,
+            }
+
+        state = {
+            "schemaVersion": 1,
+            "quarter": quarter,
+            "queueHash": queue.get("queueHash"),
+            "startedAt": started_at,
+            "writeInterlock": confirm,
+            "preview": {
+                "rows": queue.get("rows", 0),
+                "approvedRows": queue.get("approvedRows", 0),
+                "editedRows": queue.get("editedRows", 0),
+                "totalAbsAmount": queue.get("totalAbsAmount", 0),
+            },
+            "logFile": str(log_path),
+            "items": items,
+        }
+        atomic_write_json(output_path, state)
+        payload = {
+            "ok": True,
+            "queuePath": queue_path,
+            "outputPath": output_path,
+            "preview": state["preview"],
+            "queueHash": state["queueHash"],
+            "logFile": state["logFile"],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        payload = {
+            "ok": False,
+            "queuePath": queue_path,
+            "outputPath": output_path,
+            "errors": [{"code": "begin-post-run-failed", "message": str(exc)}],
+        }
+        print(json.dumps(payload, indent=2))
+        return 2
+
+
+def cmd_record_post_result(
+    state_path: str,
+    statement_line_id: str,
+    response_code: int | None,
+    bank_transaction_id: str | None,
+    error_reason: str | None,
+    retry_after_seconds: int | None,
+    transport_error: str | None,
+) -> int:
+    """Apply one POST result to the persisted post-run state and append the run log."""
+    try:
+        state = load_post_run_state(state_path)
+        items = state["items"]
+        item = items.get(statement_line_id)
+        if not isinstance(item, dict):
+            raise ValueError(f"post-run state does not contain {statement_line_id}")
+
+        attempted_at = now_iso()
+        log_entry: dict[str, Any] = {
+            "statementLineId": statement_line_id,
+            "idempotencyKey": item.get("idempotencyKey"),
+            "attemptedAt": attempted_at,
+            "responseCode": response_code,
+            "bankTransactionId": bank_transaction_id,
+            "errorReason": error_reason,
+        }
+
+        if transport_error:
+            item["status"] = "confirmed"
+            item["responseCode"] = None
+            item["errorReason"] = error_reason or f"{transport_error} error during POST"
+            item["sameKeyRetryUntil"] = iso_plus_seconds(attempted_at, 6 * 60)
+            log_entry["result"] = "retryable"
+            log_entry["sameKeyRetryUntil"] = item["sameKeyRetryUntil"]
+            log_entry["errorReason"] = item["errorReason"]
+        elif response_code == 200 and bank_transaction_id:
+            item["status"] = "posted"
+            item["responseCode"] = response_code
+            item["bankTransactionId"] = bank_transaction_id
+            item["errorReason"] = None
+            item["postedAt"] = attempted_at
+            item["nextRetryAt"] = None
+            item["tenantPauseUntil"] = None
+            item["sameKeyRetryUntil"] = None
+            log_entry["result"] = "posted"
+        elif response_code == 200:
+            item["status"] = "errored"
+            item["responseCode"] = response_code
+            item["errorReason"] = error_reason or "missing BankTransactionID in successful response"
+            log_entry["result"] = "errored"
+            log_entry["errorReason"] = item["errorReason"]
+        elif response_code == 429:
+            if retry_after_seconds is None:
+                raise ValueError("429 results require --retry-after-seconds")
+            item["status"] = "confirmed"
+            item["responseCode"] = response_code
+            item["errorReason"] = error_reason or "rate limited"
+            item["nextRetryAt"] = iso_plus_seconds(attempted_at, retry_after_seconds)
+            log_entry["result"] = "retryable"
+            log_entry["retryAfterSeconds"] = retry_after_seconds
+            log_entry["nextRetryAt"] = item["nextRetryAt"]
+            log_entry["errorReason"] = item["errorReason"]
+        elif response_code == 503:
+            item["status"] = "confirmed"
+            item["responseCode"] = response_code
+            item["errorReason"] = error_reason or "Organisation Offline"
+            item["tenantPauseUntil"] = iso_plus_seconds(attempted_at, 5 * 60)
+            log_entry["result"] = "retryable"
+            log_entry["tenantPauseUntil"] = item["tenantPauseUntil"]
+            log_entry["errorReason"] = item["errorReason"]
+        elif response_code is not None and response_code >= 400:
+            item["status"] = "errored"
+            item["responseCode"] = response_code
+            item["errorReason"] = error_reason or "POST failed"
+            log_entry["result"] = "errored"
+            log_entry["errorReason"] = item["errorReason"]
+        else:
+            raise ValueError("must provide either --transport-error or a supported --response-code")
+
+        state["items"][statement_line_id] = item
+        atomic_write_json(state_path, state)
+        append_jsonl(state.get("logFile") or Path(state_path).with_suffix(".log.ndjson"), log_entry)
+        payload = {
+            "ok": True,
+            "statePath": state_path,
+            "statementLineId": statement_line_id,
+            "status": item["status"],
+            "postedAt": item.get("postedAt"),
+            "nextRetryAt": item.get("nextRetryAt"),
+            "tenantPauseUntil": item.get("tenantPauseUntil"),
+            "sameKeyRetryUntil": item.get("sameKeyRetryUntil"),
+            "errorReason": item.get("errorReason"),
+            "bankTransactionId": item.get("bankTransactionId"),
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        payload = {
+            "ok": False,
+            "statePath": state_path,
+            "statementLineId": statement_line_id,
+            "errors": [{"code": "record-post-result-failed", "message": str(exc)}],
+        }
+        print(json.dumps(payload, indent=2))
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for review CSV tooling."""
     args = parse_args(argv if argv is not None else sys.argv[1:])
@@ -548,6 +814,18 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_merge(args.csv_path, args.seal, args.output)
     if args.command == "export-post-bodies":
         return cmd_export_post_bodies(args.csv_path, args.seal, args.output)
+    if args.command == "begin-post-run":
+        return cmd_begin_post_run(args.queue_path, args.output, args.confirm)
+    if args.command == "record-post-result":
+        return cmd_record_post_result(
+            args.state_path,
+            args.statement_line_id,
+            args.response_code,
+            args.bank_transaction_id,
+            args.error_reason,
+            args.retry_after_seconds,
+            args.transport_error,
+        )
     raise ValueError(f"unsupported command: {args.command}")
 
 
