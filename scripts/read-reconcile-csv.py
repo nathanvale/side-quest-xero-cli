@@ -72,6 +72,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     export_parser.add_argument("--seal", required=True, help="Quarter seal JSON path")
     export_parser.add_argument("--output", required=True, help="Path to write the POST queue JSON")
 
+    verify_parser = subparsers.add_parser(
+        "verify-post-sync",
+        help="Compare the original review queue against a freshly rebuilt current seal",
+    )
+    verify_parser.add_argument("queue_path", help="Path to the exported POST queue JSON")
+    verify_parser.add_argument("--current-seal", required=True, help="Freshly rebuilt current quarter seal JSON path")
+
     begin_parser = subparsers.add_parser(
         "begin-post-run",
         help="Write a confirmed post-run state after explicit interlock confirmation",
@@ -590,6 +597,12 @@ def cmd_export_post_bodies(csv_path: str, seal_path: str, output_path: str) -> i
         payload = {
             "schemaVersion": 1,
             "quarter": seal.get("quarter"),
+            "bankAccountId": bank_account_id,
+            "originalSeal": {
+                "sealedAt": seal.get("sealedAt"),
+                "sourceManifest": seal.get("sourceManifest"),
+                "statementLineCount": seal.get("statementLineCount"),
+            },
             "queueHash": queue_hash,
             "rows": len(queue_rows),
             "approvedRows": sum(1 for row in queue_rows if row["status"] == "APPROVE"),
@@ -607,6 +620,107 @@ def cmd_export_post_bodies(csv_path: str, seal_path: str, output_path: str) -> i
             "sealPath": seal_path,
             "outputPath": output_path,
             "errors": [{"code": "export-post-bodies-failed", "message": str(exc)}],
+        }
+        print(json.dumps(payload, indent=2))
+        return 2
+
+
+def cmd_verify_post_sync(queue_path: str, current_seal_path: str) -> int:
+    """Fail closed if the live/refreshed seal no longer matches the reviewed queue baseline."""
+    try:
+        queue = load_post_queue(queue_path)
+        current_seal = load_seal(current_seal_path)
+        errors: list[dict[str, Any]] = []
+
+        queue_quarter = str(queue.get("quarter", "")).strip()
+        current_quarter = str(current_seal.get("quarter", "")).strip()
+        if queue_quarter != current_quarter:
+            errors.append(
+                {
+                    "code": "quarter-mismatch",
+                    "message": f"queue quarter {queue_quarter} does not match current seal quarter {current_quarter}",
+                }
+            )
+
+        queue_bank_account_id = str(queue.get("bankAccountId", "")).strip()
+        current_bank_account_id = str(current_seal.get("bankAccountId", "")).strip()
+        if queue_bank_account_id != current_bank_account_id:
+            errors.append(
+                {
+                    "code": "bank-account-mismatch",
+                    "message": "bank account changed between reviewed queue and current seal",
+                }
+            )
+
+        original_manifest = queue.get("originalSeal", {}).get("sourceManifest")
+        current_manifest = current_seal.get("sourceManifest")
+        if not isinstance(original_manifest, dict):
+            errors.append(
+                {
+                    "code": "missing-original-manifest",
+                    "message": "queue does not contain the original seal source manifest",
+                }
+            )
+        elif not isinstance(current_manifest, dict):
+            errors.append(
+                {
+                    "code": "missing-current-manifest",
+                    "message": "current seal does not contain a source manifest",
+                }
+            )
+        else:
+            if original_manifest.get("statementLines") != current_manifest.get("statementLines"):
+                errors.append(
+                    {
+                        "code": "statement-lines-drift",
+                        "message": "statement lines changed since the review queue was created",
+                    }
+                )
+
+        current_lines = {
+            str(item.get("statementLineId", "")).strip(): item
+            for item in current_seal.get("statementLines") or []
+        }
+        for item in queue.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            statement_line_id = str(item.get("statementLineId", "")).strip()
+            current_line = current_lines.get(statement_line_id)
+            if not isinstance(current_line, dict):
+                errors.append(
+                    {
+                        "code": "missing-statement-line",
+                        "message": f"current seal no longer contains {statement_line_id}",
+                        "statementLineId": statement_line_id,
+                    }
+                )
+                continue
+            if bool(current_line.get("isReconciled")) or bool(current_line.get("bankTransactions")):
+                errors.append(
+                    {
+                        "code": "already-reconciled",
+                        "message": f"{statement_line_id} is already reconciled in the current seal",
+                        "statementLineId": statement_line_id,
+                    }
+                )
+
+        payload = {
+            "ok": len(errors) == 0,
+            "queuePath": queue_path,
+            "currentSealPath": current_seal_path,
+            "quarter": current_quarter,
+            "queueHash": queue.get("queueHash"),
+            "checkedRows": len(queue.get("items", [])),
+            "errors": errors,
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if payload["ok"] else 2
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        payload = {
+            "ok": False,
+            "queuePath": queue_path,
+            "currentSealPath": current_seal_path,
+            "errors": [{"code": "verify-post-sync-failed", "message": str(exc)}],
         }
         print(json.dumps(payload, indent=2))
         return 2
@@ -814,6 +928,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_merge(args.csv_path, args.seal, args.output)
     if args.command == "export-post-bodies":
         return cmd_export_post_bodies(args.csv_path, args.seal, args.output)
+    if args.command == "verify-post-sync":
+        return cmd_verify_post_sync(args.queue_path, args.current_seal)
     if args.command == "begin-post-run":
         return cmd_begin_post_run(args.queue_path, args.output, args.confirm)
     if args.command == "record-post-result":

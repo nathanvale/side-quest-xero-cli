@@ -15,6 +15,7 @@ Use this when you want the lowest-friction reconciliation path:
 - The review artifact is the CSV in Google Drive, not a live terminal session
 - Google Sheets version history is the human undo/rollback path
 - The quarter seal freezes statement-line facts so there are no surprise "session expired" blockers during review
+- Auth remains out of scope here. Do not automate login as part of the review loop; instead require a fresh extract/seal before any write phase.
 
 ## Phase 1: Seal the quarter
 
@@ -89,6 +90,18 @@ python3 scripts/read-reconcile-csv.py \
   --seal "data/.quarter-cache-fy25-q4.json" \
   --output "data/.post-queue-fy25-q4.json"
 ```
+
+Before any write phase, rebuild the current seal from a fresh extract and verify drift:
+
+```bash
+python3 scripts/manage-quarters.py seal "$Q" "$FY"
+
+python3 scripts/read-reconcile-csv.py \
+  verify-post-sync "data/.post-queue-fy25-q4.json" \
+  --current-seal "data/.quarter-cache-fy25-q4.json"
+```
+
+If this fails, stop. Xero changed underneath the reviewed CSV, so regenerate or merge from the refreshed seal before writing.
 
 Begin the guarded post run:
 

@@ -690,6 +690,132 @@ class ReconcileRoundTripTests(unittest.TestCase):
                 "confirmed",
             )
 
+    def test_verify_post_sync_blocks_drifted_current_seal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue_path = root / "queue.json"
+            current_seal_path = root / "current-seal.json"
+            queue = {
+                "quarter": "Q4 FY25",
+                "bankAccountId": "bank-1",
+                "queueHash": "queue-hash",
+                "originalSeal": {
+                    "sourceManifest": {
+                        "statementLines": {
+                            "path": "data/statement-lines-fy25-q4.ndjson",
+                            "size": 100,
+                            "mtime": 1,
+                            "sha256": "abc",
+                            "semanticFingerprint": "fingerprint-original",
+                        }
+                    }
+                },
+                "items": [
+                    {
+                        "statementLineId": "11111111-1111-1111-1111-111111111111",
+                        "status": "APPROVE",
+                        "body": {"Type": "SPEND"},
+                    }
+                ],
+            }
+            current_seal = {
+                "quarter": "Q4 FY25",
+                "bankAccountId": "bank-1",
+                "sourceManifest": {
+                    "statementLines": {
+                        "path": "data/statement-lines-fy25-q4.ndjson",
+                        "size": 100,
+                        "mtime": 2,
+                        "sha256": "def",
+                        "semanticFingerprint": "fingerprint-drifted",
+                    }
+                },
+                "statementLines": [
+                    {
+                        "statementLineId": "11111111-1111-1111-1111-111111111111",
+                        "postedDate": "2025-04-01",
+                        "payee": "Github Inc",
+                        "amount": -49.99,
+                        "isReconciled": True,
+                    }
+                ],
+                "accounts": [{"Code": "495", "Name": "Software", "Status": "ACTIVE"}],
+            }
+            queue_path.write_text(json.dumps(queue), encoding="utf-8")
+            current_seal_path.write_text(json.dumps(current_seal), encoding="utf-8")
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                result = self.read_module.cmd_verify_post_sync(
+                    str(queue_path), str(current_seal_path)
+                )
+            payload = json.loads(buffer.getvalue())
+
+            self.assertEqual(result, 2)
+            self.assertFalse(payload["ok"])
+            self.assertTrue(
+                any(error["code"] == "statement-lines-drift" for error in payload["errors"])
+            )
+            self.assertTrue(
+                any(error["code"] == "already-reconciled" for error in payload["errors"])
+            )
+
+    def test_verify_post_sync_passes_when_current_seal_matches_queue_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue_path = root / "queue.json"
+            current_seal_path = root / "current-seal.json"
+            manifest = {
+                "statementLines": {
+                    "path": "data/statement-lines-fy25-q4.ndjson",
+                    "size": 100,
+                    "mtime": 1,
+                    "sha256": "abc",
+                    "semanticFingerprint": "fingerprint-original",
+                }
+            }
+            queue = {
+                "quarter": "Q4 FY25",
+                "bankAccountId": "bank-1",
+                "queueHash": "queue-hash",
+                "originalSeal": {"sourceManifest": manifest},
+                "items": [
+                    {
+                        "statementLineId": "11111111-1111-1111-1111-111111111111",
+                        "status": "APPROVE",
+                        "body": {"Type": "SPEND"},
+                    }
+                ],
+            }
+            current_seal = {
+                "quarter": "Q4 FY25",
+                "bankAccountId": "bank-1",
+                "sourceManifest": manifest,
+                "statementLines": [
+                    {
+                        "statementLineId": "11111111-1111-1111-1111-111111111111",
+                        "postedDate": "2025-04-01",
+                        "payee": "Github Inc",
+                        "amount": -49.99,
+                        "isReconciled": False,
+                    }
+                ],
+                "accounts": [{"Code": "495", "Name": "Software", "Status": "ACTIVE"}],
+            }
+            queue_path.write_text(json.dumps(queue), encoding="utf-8")
+            current_seal_path.write_text(json.dumps(current_seal), encoding="utf-8")
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                result = self.read_module.cmd_verify_post_sync(
+                    str(queue_path), str(current_seal_path)
+                )
+            payload = json.loads(buffer.getvalue())
+
+            self.assertEqual(result, 0)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["errors"], [])
+
     def test_record_post_result_handles_success_and_retries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
