@@ -15,6 +15,7 @@ from reconcile_roundtrip import (
     build_review_rows_from_seal,
     load_accounts_map,
     load_ndjson,
+    load_seal,
     write_review_csv,
 )
 
@@ -37,21 +38,6 @@ def load_contact_lookup(path: str | None) -> dict[str, Any]:
         return {}
     lookup = payload.get("lookup", payload)
     return lookup if isinstance(lookup, dict) else {}
-
-
-def load_seal(path: str) -> dict[str, Any]:
-    """Load and minimally validate the quarter seal."""
-    with Path(path).open(encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, dict):
-        raise ValueError("seal must contain a JSON object")
-    if not isinstance(payload.get("statementLines"), list):
-        raise ValueError("seal is missing statementLines")
-    if not isinstance(payload.get("accounts"), list):
-        raise ValueError("seal is missing accounts")
-    return payload
-
-
 def build_legacy_seal(
     statement_lines_path: str,
     accounts_path: str,

@@ -125,7 +125,8 @@ function stableJsonStringify(value: unknown): string {
 	return 'null'
 }
 
-function jsonSha256(value: unknown): string {
+/** Return the canonical SHA-256 digest for queue/state JSON payloads. */
+export function jsonSha256(value: unknown): string {
 	return createHash('sha256').update(stableJsonStringify(value)).digest('hex')
 }
 

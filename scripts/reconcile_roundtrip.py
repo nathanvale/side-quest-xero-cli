@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 import re
+import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,7 @@ REVIEW_FIELDNAMES = [
 ]
 VALID_REVIEW_STATUSES = {"", "APPROVE", "EDIT", "SKIP", "REVIEW"}
 GENERIC_PAYEES = {"TRANSFER", "PAYMENT", "DIRECT DEBIT", "DIRECT CREDIT", "DEBIT"}
+FILE_STABILITY_DELAY_SECONDS = 0.2
 
 
 def load_ndjson(path: str | Path) -> list[dict[str, Any]]:
@@ -47,16 +50,38 @@ def load_ndjson(path: str | Path) -> list[dict[str, Any]]:
     return rows
 
 
+def load_seal(path: str | Path) -> dict[str, Any]:
+    """Load and minimally validate a quarter seal."""
+    with Path(path).open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError("seal must contain a JSON object")
+    if not isinstance(payload.get("statementLines"), list):
+        raise ValueError("seal is missing statementLines")
+    if not isinstance(payload.get("accounts"), list):
+        raise ValueError("seal is missing accounts")
+    return payload
+
+
 def atomic_write_json(path: str | Path, payload: Any) -> None:
     """Write JSON atomically with private file permissions."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = Path(f"{target}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-        handle.write("\n")
-    os.replace(tmp, target)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.tmp-",
+        dir=target.parent,
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -73,6 +98,22 @@ def json_sha256(payload: Any) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def ensure_stable_file(path: str | Path) -> None:
+    """Reject files that change across two spaced hash/stat reads."""
+    target = Path(path)
+    before = target.stat()
+    before_hash = sha256_file(target)
+    time.sleep(FILE_STABILITY_DELAY_SECONDS)
+    after = target.stat()
+    after_hash = sha256_file(target)
+    if (
+        before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before_hash != after_hash
+    ):
+        raise ValueError(f"CSV appears to be changing during read-back: {target}")
 
 
 def build_file_manifest(path: str | Path) -> dict[str, Any]:

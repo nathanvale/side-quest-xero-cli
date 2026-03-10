@@ -6,6 +6,8 @@ import io
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -16,7 +18,12 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from reconcile_roundtrip import REVIEW_FIELDNAMES
+from reconcile_roundtrip import (
+    REVIEW_FIELDNAMES,
+    atomic_write_json,
+    ensure_stable_file,
+    json_sha256,
+)
 
 
 def load_module(name: str, path: Path):
@@ -48,6 +55,116 @@ class ReconcileRoundTripTests(unittest.TestCase):
             for row in rows:
                 handle.write(json.dumps(row))
                 handle.write("\n")
+
+    def write_review_csv(self, path: Path, rows: list[str]) -> None:
+        path.write_text("\n".join(rows), encoding="utf-8")
+
+    def build_basic_seal(self, **statement_line_overrides: Any) -> dict[str, Any]:
+        statement_line = {
+            "statementLineId": "11111111-1111-1111-1111-111111111111",
+            "postedDate": "2025-04-01",
+            "payee": "Github Inc",
+            "amount": -49.99,
+            "currencyCode": "AUD",
+            "isReconciled": False,
+        }
+        statement_line.update(statement_line_overrides)
+        return {
+            "quarter": "Q4 FY25",
+            "bankAccountId": "bank-1",
+            "statementLines": [statement_line],
+            "accounts": [
+                {"Code": "495", "Name": "Software", "Status": "ACTIVE"},
+                {"Code": "200", "Name": "Sales Revenue", "Status": "ACTIVE"},
+            ],
+            "contactLookup": {"lookup": {}},
+            "history": {"rows": []},
+        }
+
+    def write_basic_review_row(
+        self,
+        path: Path,
+        *,
+        status: str = "",
+        account_code: str = "495",
+        account_name: str = "Software",
+        contact: str = "Github Inc",
+        payee: str = "Github Inc",
+        evidence: str = "history",
+        statement_line_id: str = "11111111-1111-1111-1111-111111111111",
+    ) -> None:
+        self.write_review_csv(
+            path,
+            [
+                '"Status","Date","Payee","Amount","Type","AccountCode","AccountName","Contact","Confidence","Evidence","StatementLineID"',
+                f'"{status}","2025-04-01","{payee}","-49.99","SPEND","{account_code}","{account_name}","{contact}","high (80)","{evidence}","{statement_line_id}"',
+            ],
+        )
+
+    def run_cmd_read(
+        self,
+        csv_path: Path,
+        seal_path: Path,
+    ) -> tuple[int, dict[str, Any]]:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            result = self.read_module.cmd_read(str(csv_path), str(seal_path))
+        return result, json.loads(buffer.getvalue())
+
+    def test_json_sha256_matches_typescript_hash_fixture(self) -> None:
+        payload = {
+            "Type": "SPEND",
+            "Contact": {"Name": "Github Inc"},
+            "LineItems": [
+                {
+                    "Description": "Github Inc",
+                    "Quantity": 1,
+                    "UnitAmount": 49.99,
+                    "AccountCode": "495",
+                    "TaxType": "INPUT",
+                }
+            ],
+            "BankAccount": {"AccountID": "bank-1"},
+            "Date": "2025-04-01",
+            "CurrencyCode": "AUD",
+            "IsReconciled": True,
+        }
+        self.assertEqual(
+            json_sha256(payload),
+            "35b63a14fbd0cc33885bf533bc4158f2afd056f20e8d55e94920fb380c57a50a",
+        )
+
+    def test_atomic_write_json_ignores_deterministic_tmp_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "queue.json"
+            sibling_tmp = root / "queue.json.tmp"
+            sibling_tmp.write_text("do not touch", encoding="utf-8")
+
+            atomic_write_json(target, {"ok": True})
+
+            self.assertEqual(
+                json.loads(target.read_text(encoding="utf-8")),
+                {"ok": True},
+            )
+            self.assertEqual(sibling_tmp.read_text(encoding="utf-8"), "do not touch")
+
+    def test_ensure_stable_file_detects_mid_read_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "review.csv"
+            target.write_text("before\n", encoding="utf-8")
+
+            def mutate_file() -> None:
+                time.sleep(0.05)
+                target.write_text("after\n", encoding="utf-8")
+
+            worker = threading.Thread(target=mutate_file)
+            worker.start()
+            try:
+                with self.assertRaisesRegex(ValueError, "changing during read-back"):
+                    ensure_stable_file(target)
+            finally:
+                worker.join()
 
     def test_seal_quarter_builds_cache_and_skips_when_inputs_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -258,8 +375,95 @@ class ReconcileRoundTripTests(unittest.TestCase):
             self.assertEqual(rows[0]["AccountCode"], "495")
             self.assertEqual(rows[0]["AccountName"], "Software")
             self.assertEqual(rows[0]["Contact"], "Github Inc")
-            self.assertTrue(rows[0]["Confidence"].startswith("high"))
-            self.assertEqual(rows[1]["Status"], "")
+
+    def test_export_round_trips_payee_with_embedded_comma(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seal_path = root / "seal.json"
+            csv_path = root / "review.csv"
+            seal = self.build_basic_seal(payee="Smith, John")
+            seal_path.write_text(json.dumps(seal), encoding="utf-8")
+
+            result = self.export_module.main(
+                ["--seal", str(seal_path), "--output", str(csv_path)]
+            )
+            self.assertEqual(result, 0)
+
+            with csv_path.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(rows[0]["Payee"], "Smith, John")
+
+            read_result, payload = self.run_cmd_read(csv_path, seal_path)
+            self.assertEqual(read_result, 0)
+            self.assertTrue(payload["ok"])
+
+    def test_read_rejects_invalid_account_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seal_path = root / "seal.json"
+            csv_path = root / "review.csv"
+            seal_path.write_text(json.dumps(self.build_basic_seal()), encoding="utf-8")
+            self.write_basic_review_row(csv_path, status="APPROVE", account_code="999")
+
+            result, payload = self.run_cmd_read(csv_path, seal_path)
+
+            self.assertEqual(result, 2)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["errors"][0]["code"], "invalid-account-code")
+
+    def test_read_rejects_approve_without_account_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seal_path = root / "seal.json"
+            csv_path = root / "review.csv"
+            seal_path.write_text(json.dumps(self.build_basic_seal()), encoding="utf-8")
+            self.write_basic_review_row(
+                csv_path,
+                status="APPROVE",
+                account_code="",
+                account_name="",
+            )
+
+            result, payload = self.run_cmd_read(csv_path, seal_path)
+
+            self.assertEqual(result, 2)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["errors"][0]["code"], "missing-account-code")
+
+    def test_read_rejects_unknown_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seal_path = root / "seal.json"
+            csv_path = root / "review.csv"
+            seal_path.write_text(json.dumps(self.build_basic_seal()), encoding="utf-8")
+            self.write_basic_review_row(csv_path, status="MAYBE")
+
+            result, payload = self.run_cmd_read(csv_path, seal_path)
+
+            self.assertEqual(result, 2)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["errors"][0]["code"], "invalid-status")
+
+    def test_read_rejects_reordered_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seal_path = root / "seal.json"
+            csv_path = root / "review.csv"
+            seal_path.write_text(json.dumps(self.build_basic_seal()), encoding="utf-8")
+            self.write_review_csv(
+                csv_path,
+                [
+                    '"Date","Status","Payee","Amount","Type","AccountCode","AccountName","Contact","Confidence","Evidence","StatementLineID"',
+                    '"2025-04-01","APPROVE","Github Inc","-49.99","SPEND","495","Software","Github Inc","high (80)","history","11111111-1111-1111-1111-111111111111"',
+                ],
+            )
+
+            result, payload = self.run_cmd_read(csv_path, seal_path)
+
+            self.assertEqual(result, 2)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["errors"][0]["code"], "read-failed")
+            self.assertIn("CSV header mismatch", payload["errors"][0]["message"])
 
     def test_export_can_copy_csv_to_google_drive_inbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

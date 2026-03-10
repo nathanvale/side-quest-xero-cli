@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import hashlib
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,33 +18,14 @@ from reconcile_roundtrip import (
     atomic_write_json,
     build_review_rows_from_seal,
     clean_statement_line_id,
+    ensure_stable_file,
     json_sha256,
     load_accounts_map,
+    load_seal,
     normalize_status,
     normalize_payee,
     write_review_csv,
 )
-
-
-def load_seal(path: str) -> dict[str, Any]:
-    """Load and minimally validate a quarter seal."""
-    with Path(path).open(encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, dict):
-        raise ValueError("seal must contain a JSON object")
-    if not isinstance(payload.get("statementLines"), list):
-        raise ValueError("seal is missing statementLines")
-    if not isinstance(payload.get("accounts"), list):
-        raise ValueError("seal is missing accounts")
-    return payload
-
-
-def ensure_stable_file(path: Path) -> None:
-    """Reject files that are actively changing during read-back."""
-    before = path.stat()
-    after = path.stat()
-    if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
-        raise ValueError(f"CSV appears to be changing during read-back: {path}")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
