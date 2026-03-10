@@ -1,12 +1,12 @@
 ---
 name: xero-explorer
 description: >
-  Reconcile Xero statement lines and extract accounting data via the
-  Xero API Explorer browser + xero-cli hybrid flow when OAuth scope is constrained. Use when the user asks
-  to pull Xero data, extract ledgers, reconcile transactions, check
+  Reconcile Xero statement lines and extract accounting data via a
+  CSV-first xero-cli + browser hybrid flow when OAuth scope is constrained. Use when the user asks
+  to pull Xero data, extract ledgers, run the offline CSV review loop, check
   reconciliation progress, remaining unreconciled transactions, or work
   around the OAuth 403 block.
-argument-hint: "{extract|reconcile|status|quarter-status|new-quarter}"
+argument-hint: "{extract|csv-review|reconcile|status|quarter-status|new-quarter}"
 disable-model-invocation: true
 ---
 
@@ -15,6 +15,7 @@ disable-model-invocation: true
 Orchestrate Xero accounting operations through a hybrid flow:
 - `xero-cli` for standard Accounting API endpoints
 - `agent-browser` only for Finance API statement lines (`BankStatementsPlus`)
+- Google Sheets CSV review as the default human review surface
 
 Designed to minimize browser automation while restricted scopes remain blocked.
 
@@ -114,8 +115,8 @@ The full reconciliation pipeline for a quarter:
 2. **Export** -- Download QIF from CommBank online banking. Save to `data/bank-export-fy{YY}-q{N}-{months}.qif`
 3. **Import** -- Upload QIF into Xero (manual via Xero UI; API import not yet available publicly -- Bank Feeds API is partner-only)
 4. **Extract** -- Pull accounting data via `xero-cli` + statement lines via `agent-browser` (`/xero-explorer extract`)
-5. **Reconcile** -- Match and POST via agent-browser (`/xero-explorer reconcile`)
-6. **CSV review** -- Prefer the offline CSV loop for review and iteration before POST (`workflows/csv-review.md`)
+5. **CSV review** -- Default path: seal -> export -> review -> merge -> verify -> post (`workflows/csv-review.md`)
+6. **Rapid-fire reconcile** -- Fallback only for the final stubborn items or when the user explicitly wants a live session (`/xero-explorer reconcile`)
 
 **Why extraction can't be skipped:** The QIF bank export has the raw transactions, but extraction from Xero confirms they're actually imported and visible to Xero's reconciliation engine. Extraction provides:
 - **Validation** -- QIF txn count == statement lines count means the import worked correctly
@@ -191,10 +192,11 @@ python3 scripts/manage-quarters.py status
 Then ask: What would you like to do?
 
 1. **[Extract data](workflows/extract.md)** -- Pull latest data via CLI-first hybrid into NDJSON files (Accounting via CLI, Finance via browser)
-2. **[Reconcile](workflows/reconcile.md)** -- Match unreconciled statement lines to accounts and POST via API Explorer
-3. **Status** -- Check reconciliation progress from state file
-4. **Quarter status** -- Show which quarters have bank exports, extractions, reconciliation
+2. **[CSV review](workflows/csv-review.md)** -- Recommended: offline seal -> Sheets review -> drift check -> `xero-cli reconcile-post`
+3. **Status** -- Check reconciliation progress for a specific quarter
+4. **Quarter status** -- Show which quarters have bank exports, extractions, and reconciliation progress
 5. **[New quarter setup](workflows/new-quarter.md)** -- Add/validate a new quarter's QIF export before extraction
+6. **[Rapid-fire fallback](workflows/reconcile.md)** -- Live reconcile session for the last stubborn items only
 
 Before starting reconciliation, read:
 - [references/matching-rules.md](references/matching-rules.md) -- categorization rules, contact lookup, POST templates
@@ -203,21 +205,20 @@ Before starting reconciliation, read:
 
 **Routing:**
 - `extract`/`pull` -> [Extract](workflows/extract.md)
-- `reconcile`/`match` -> [Reconcile](workflows/reconcile.md)
 - `csv`/`sheet`/`spreadsheet`/`review loop` -> [CSV Review](workflows/csv-review.md)
+- `reconcile`/`match` -> [CSV Review](workflows/csv-review.md) by default; use [Reconcile](workflows/reconcile.md) only when the user explicitly wants live rapid-fire reconciliation
 - `status`/`progress` -> Status Check (below)
 - `quarters` -> Quarter status (below)
 - `new quarter`/`setup quarter`/`download qif` -> [New quarter setup](workflows/new-quarter.md)
-- `Q1`/`Q2`/`Q3`/`Q4` -> run Quarter Gate validation first, then ask extract or reconcile
+- `Q1`/`Q2`/`Q3`/`Q4` -> run Quarter Gate validation first, then ask extract or CSV review
 
 **Intake logic:**
 - Run `python3 scripts/manage-quarters.py status` to show pipeline overview
 - If no `quarters.json`, run `python3 scripts/manage-quarters.py init` first
-- Recommend canonical session bootstrap:
-  - `./scripts/xero-explorer-runner.sh 4 25 batch`
-  - `./scripts/xero-explorer-runner.sh 4 25 rapid-fire --dry-run`
-  - Usage: `xero-explorer-runner.sh <Q> <FY> <mode> [--dry-run]`
-    - `Q`: quarter number (1-4)
+- Recommend the CSV-first path before any live reconcile runner session.
+- Only suggest `./scripts/xero-explorer-runner.sh <Q> <FY> <mode> [--dry-run]` when:
+  - the user explicitly asks for live rapid-fire reconcile
+  - or the CSV loop has already narrowed the quarter to a small stubborn remainder
     - `FY`: two-digit financial year (e.g., 25 for FY25)
     - `mode`: `batch` | `rapid-fire`
     - `--dry-run`: classify + preview only, no POST writes

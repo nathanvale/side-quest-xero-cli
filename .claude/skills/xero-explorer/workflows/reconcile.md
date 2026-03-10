@@ -1,4 +1,4 @@
-# Workflow: Reconcile via API Explorer
+# Workflow: Rapid-Fire Reconcile Fallback
 
 Match unreconciled statement lines to accounts and POST reconciliation entries
 through the Xero API Explorer browser.
@@ -12,6 +12,10 @@ CSV-first is now the recommended review path for most quarters:
 - Use rapid-fire only as a fallback for the final stubborn items
 
 See [csv-review.md](csv-review.md) for the full offline review loop.
+
+Use this workflow only when:
+- the user explicitly asks for live terminal/browser reconciliation
+- or the CSV loop is down to a small set of stubborn items where rapid-fire review is faster than another spreadsheet round
 
 ## Context
 
