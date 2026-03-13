@@ -72,6 +72,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help='Exact confirmation phrase, for example "WRITE Q4 FY25"',
     )
 
+    begin_del_parser = subparsers.add_parser(
+        "begin-delete-run",
+        help="Write a confirmed delete-run state from a post-run state file",
+    )
+    begin_del_parser.add_argument("post_run_path", help="Path to the post-run state JSON")
+    begin_del_parser.add_argument("--output", required=True, help="Path to write the delete-run state JSON")
+    begin_del_parser.add_argument(
+        "--confirm",
+        required=True,
+        help='Exact confirmation phrase, for example "DELETE Q4 FY25"',
+    )
+
     record_parser = subparsers.add_parser(
         "record-post-result",
         help="Apply one POST result to the post-run state and append the run log",
@@ -900,6 +912,99 @@ def cmd_record_post_result(
         return 2
 
 
+def cmd_begin_delete_run(post_run_path: str, output_path: str, confirm: str) -> int:
+    """Create the persisted delete-run state from a post-run state file."""
+    try:
+        post_run = load_post_run_state(post_run_path)
+        quarter = str(post_run.get("quarter", "")).strip()
+        expected_confirm = f"DELETE {quarter}"
+        if confirm != expected_confirm:
+            payload = {
+                "ok": False,
+                "postRunPath": post_run_path,
+                "outputPath": output_path,
+                "errors": [
+                    {
+                        "code": "confirm-mismatch",
+                        "message": f'confirmation phrase must be exactly "{expected_confirm}"',
+                    }
+                ],
+            }
+            print(json.dumps(payload, indent=2))
+            return 2
+
+        started_at = now_iso()
+        state_path = Path(output_path)
+        log_path = state_path.with_suffix(".log.ndjson")
+        items: dict[str, Any] = {}
+        posted_count = 0
+        for _key, item in post_run.get("items", {}).items():
+            if not isinstance(item, dict):
+                continue
+            if item.get("status") != "posted":
+                continue
+            statement_line_id = str(item.get("statementLineId", "")).strip()
+            bank_transaction_id = str(item.get("bankTransactionId", "")).strip()
+            if not statement_line_id or not bank_transaction_id:
+                continue
+            items[statement_line_id] = {
+                "statementLineId": statement_line_id,
+                "status": "confirmed",
+                "bankTransactionId": bank_transaction_id,
+                "responseCode": None,
+                "errorReason": None,
+                "deletedAt": None,
+                "nextRetryAt": None,
+                "tenantPauseUntil": None,
+            }
+            posted_count += 1
+
+        if posted_count == 0:
+            payload = {
+                "ok": False,
+                "postRunPath": post_run_path,
+                "outputPath": output_path,
+                "errors": [
+                    {
+                        "code": "no-posted-items",
+                        "message": "post-run state contains no posted items to delete",
+                    }
+                ],
+            }
+            print(json.dumps(payload, indent=2))
+            return 2
+
+        state = {
+            "schemaVersion": 1,
+            "quarter": quarter,
+            "sourcePostRun": str(Path(post_run_path).resolve()),
+            "startedAt": started_at,
+            "writeInterlock": confirm,
+            "logFile": str(log_path),
+            "items": items,
+        }
+        atomic_write_json(output_path, state)
+        payload = {
+            "ok": True,
+            "postRunPath": post_run_path,
+            "outputPath": output_path,
+            "quarter": quarter,
+            "postedItems": posted_count,
+            "logFile": state["logFile"],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        payload = {
+            "ok": False,
+            "postRunPath": post_run_path,
+            "outputPath": output_path,
+            "errors": [{"code": "begin-delete-run-failed", "message": str(exc)}],
+        }
+        print(json.dumps(payload, indent=2))
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for review CSV tooling."""
     args = parse_args(argv if argv is not None else sys.argv[1:])
@@ -913,6 +1018,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_verify_post_sync(args.queue_path, args.current_seal)
     if args.command == "begin-post-run":
         return cmd_begin_post_run(args.queue_path, args.output, args.confirm)
+    if args.command == "begin-delete-run":
+        return cmd_begin_delete_run(args.post_run_path, args.output, args.confirm)
     if args.command == "record-post-result":
         return cmd_record_post_result(
             args.state_path,

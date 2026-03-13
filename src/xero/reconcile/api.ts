@@ -321,6 +321,38 @@ export async function createBankTransaction(
 	return assertValidBankTransactionResponse(response)
 }
 
+/** Delete one BankTransaction by setting its Status to DELETED. */
+export async function deleteBankTransaction(
+	accessToken: string,
+	tenantId: string,
+	bankTransactionId: string,
+	options: ReconcileApiOptions,
+): Promise<BankTransactionRecord> {
+	const response = await xeroFetch<BankTransactionsResponse>(
+		`/BankTransactions/${bankTransactionId}`,
+		{
+			method: 'POST',
+			body: JSON.stringify({
+				BankTransactions: [
+					{
+						BankTransactionID: bankTransactionId,
+						Status: 'DELETED',
+					},
+				],
+			}),
+		},
+		{
+			accessToken,
+			tenantId,
+			eventsConfig: options.eventsConfig,
+			onUnauthorized: async () => await loadValidTokens(options.eventsConfig),
+			onRetry: options.onRetry,
+			schema: BankTransactionsResponseSchema,
+		},
+	)
+	return assertValidBankTransactionResponse(response)
+}
+
 export async function fetchInvoicesById(
 	accessToken: string,
 	tenantId: string,

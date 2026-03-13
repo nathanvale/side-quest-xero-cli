@@ -15,6 +15,7 @@ import { runHistory } from './commands/history'
 import { runInvoices } from './commands/invoices'
 import { runPayments } from './commands/payments'
 import { runReconcile } from './commands/reconcile'
+import { runReconcileDelete } from './commands/reconcile-delete'
 import { runReconcilePostQueue } from './commands/reconcile-post'
 import { runStatus } from './commands/status'
 import { runTransactions } from './commands/transactions'
@@ -142,6 +143,12 @@ interface ReconcilePostCommand extends OutputContext {
 	readonly postRun: string
 }
 
+interface ReconcileDeleteCommand extends OutputContext {
+	readonly command: 'reconcile-delete'
+	readonly execute: boolean
+	readonly postRun: string
+}
+
 type CliOptions =
 	| AuthCommand
 	| StatusCommand
@@ -153,6 +160,7 @@ type CliOptions =
 	| PaymentsCommand
 	| ReconcileCommand
 	| ReconcilePostCommand
+	| ReconcileDeleteCommand
 	| HelpCommand
 
 interface ParseCliError {
@@ -210,6 +218,7 @@ const COMMAND_FLAG_ALLOWLIST: Record<string, Set<string>> = {
 		'--queue',
 		'--post-run',
 	]),
+	'reconcile-delete': new Set(['--execute', '--dry-run', '--post-run']),
 	help: new Set([]),
 	version: new Set([]),
 }
@@ -808,6 +817,24 @@ export function parseCli(argv: readonly string[]): ParseCliResult {
 			},
 		}
 	}
+	if (commandToken === 'reconcile-delete') {
+		if (!postRunPath) {
+			return parseUsageError(
+				'Missing required --post-run for reconcile-delete',
+				json,
+				quiet,
+			)
+		}
+		return {
+			ok: true,
+			options: {
+				command: 'reconcile-delete',
+				...outputMode,
+				execute,
+				postRun: postRunPath,
+			},
+		}
+	}
 	if (commandToken === 'help') {
 		return {
 			ok: true,
@@ -945,6 +972,7 @@ function usageForTopic(topic: string | null): string {
 			'  payments       List payments created in Xero (alias: pay)',
 			'  reconcile      Reconcile transactions from stdin or CSV (alias: rec)',
 			'  reconcile-post Execute a confirmed CSV post queue',
+			'  reconcile-delete Delete posted BankTransactions',
 			'  help [topic]   Show help (command, flags, aliases, version)',
 			'',
 			'Global Flags:',
@@ -1064,6 +1092,13 @@ function usageForTopic(topic: string | null): string {
 			'  --execute    Apply the queued BankTransactions (default is dry-run)',
 			'  --dry-run    Validate inputs and preview what would post',
 		].join('\n'),
+		'reconcile-delete': [
+			'Usage: bun run xero-cli reconcile-delete --post-run <file> [--execute|--dry-run]',
+			'Flags:',
+			'  --post-run   Delete-run state JSON from begin-delete-run',
+			'  --execute    Delete the posted BankTransactions (default is dry-run)',
+			'  --dry-run    Validate inputs and preview what would be deleted',
+		].join('\n'),
 		help: ['Usage: bun run xero-cli help [topic]'].join('\n'),
 	}
 	if (commandHelp[normalizedTopic]) return commandHelp[normalizedTopic]
@@ -1085,6 +1120,7 @@ function usageForTopic(topic: string | null): string {
 		'  payments       List payments created in Xero',
 		'  reconcile      Reconcile transactions from stdin or CSV',
 		'  reconcile-post Execute a confirmed CSV post queue',
+		'  reconcile-delete Delete posted BankTransactions',
 		'  help [topic]   Show help',
 		'',
 		'Global Flags:',
@@ -1245,6 +1281,9 @@ export async function runCli(argv: readonly string[]): Promise<ExitCode> {
 					break
 				case 'reconcile-post':
 					exitCode = await runReconcilePostQueue(ctx, options)
+					break
+				case 'reconcile-delete':
+					exitCode = await runReconcileDelete(ctx, options)
 					break
 				case 'help': {
 					if (options.topic === 'version') {
