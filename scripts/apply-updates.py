@@ -41,10 +41,16 @@ FOOD_KEYWORDS = [
     "mcivers",
 ]
 
-# Override rules for specific payees
+# Override rules for specific payees (confirmed 2026-03-13)
 OVERRIDES = {
-    # AGS Coburg North -> personal (school uniforms)
     "THE TRUSTEE FOR AGS": ("911", "Override: school uniforms (personal)"),
+    "NATHAN PAY": ("804", "Override: salary transfer"),
+    "TRANSFER TO XX9027": ("804", "Override: salary transfer"),
+    "KATE BERRY": ("400", "Override: advertising agency"),
+    "WONDROUS": ("400", "Override: advertising"),
+    "SHOLEM ALEICHEM": ("911", "Override: school fees (personal)"),
+    "FOULKES MEDICAL": ("911", "Override: medical (claimable, personal)"),
+    "PV FOULKES": ("911", "Override: medical (claimable, personal)"),
 }
 
 # Skip rules - leave as REVIEW
