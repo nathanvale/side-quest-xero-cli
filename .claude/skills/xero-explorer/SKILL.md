@@ -6,7 +6,7 @@ description: >
   to pull Xero data, extract ledgers, run the offline CSV review loop, check
   reconciliation progress, remaining unreconciled transactions, or work
   around the OAuth 403 block.
-argument-hint: "{extract|csv-review|reconcile|status|quarter-status|new-quarter}"
+argument-hint: "{extract|csv-review|browser-reconcile|reconcile|status|quarter-status|new-quarter}"
 disable-model-invocation: true
 ---
 
@@ -115,8 +115,9 @@ The full reconciliation pipeline for a quarter:
 2. **Export** -- Download QIF from CommBank online banking. Save to `data/bank-export-fy{YY}-q{N}-{months}.qif`
 3. **Import** -- Upload QIF into Xero (manual via Xero UI; API import not yet available publicly -- Bank Feeds API is partner-only)
 4. **Extract** -- Pull accounting data via `xero-cli` + statement lines via `agent-browser` (`/xero-explorer extract`)
-5. **CSV review** -- Default path: seal -> export -> review -> merge -> verify -> post (`workflows/csv-review.md`)
-6. **Rapid-fire reconcile** -- Fallback only for the final stubborn items or when the user explicitly wants a live session (`/xero-explorer reconcile`)
+5. **CSV review** -- Default path: seal -> export -> review -> merge -> verify -> export queue (`workflows/csv-review.md`)
+6. **Browser reconcile** -- Automate the Xero Reconcile UI via `agent-browser` to fill Who/What/Why and click OK (`workflows/browser-reconcile.md`)
+7. **Rapid-fire reconcile** -- Fallback only for the final stubborn items or when the user explicitly wants a live session (`/xero-explorer reconcile`)
 
 **Why extraction can't be skipped:** The QIF bank export has the raw transactions, but extraction from Xero confirms they're actually imported and visible to Xero's reconciliation engine. Extraction provides:
 - **Validation** -- QIF txn count == statement lines count means the import worked correctly
@@ -192,11 +193,12 @@ python3 scripts/manage-quarters.py status
 Then ask: What would you like to do?
 
 1. **[Extract data](workflows/extract.md)** -- Pull latest data via CLI-first hybrid into NDJSON files (Accounting via CLI, Finance via browser)
-2. **[CSV review](workflows/csv-review.md)** -- Recommended: offline seal -> Sheets review -> drift check -> `xero-cli reconcile-post`
-3. **Status** -- Check reconciliation progress for a specific quarter
-4. **Quarter status** -- Show which quarters have bank exports, extractions, and reconciliation progress
-5. **[New quarter setup](workflows/new-quarter.md)** -- Add/validate a new quarter's QIF export before extraction
-6. **[Rapid-fire fallback](workflows/reconcile.md)** -- Live reconcile session for the last stubborn items only
+2. **[CSV review](workflows/csv-review.md)** -- Recommended: offline seal -> Sheets review -> drift check -> export queue
+3. **[Browser reconcile](workflows/browser-reconcile.md)** -- Automate Xero Reconcile UI via `agent-browser` (fills Who/What/Why, clicks OK)
+4. **Status** -- Check reconciliation progress for a specific quarter
+5. **Quarter status** -- Show which quarters have bank exports, extractions, and reconciliation progress
+6. **[New quarter setup](workflows/new-quarter.md)** -- Add/validate a new quarter's QIF export before extraction
+7. **[Rapid-fire fallback](workflows/reconcile.md)** -- Live reconcile session for the last stubborn items only
 
 Before starting reconciliation, read:
 - [references/matching-rules.md](references/matching-rules.md) -- categorization rules, contact lookup, POST templates
@@ -207,6 +209,7 @@ Before starting reconciliation, read:
 - `extract`/`pull` -> [Extract](workflows/extract.md)
 - `csv`/`sheet`/`spreadsheet`/`review loop` -> [CSV Review](workflows/csv-review.md)
 - `reconcile`/`match` -> [CSV Review](workflows/csv-review.md) by default; use [Reconcile](workflows/reconcile.md) only when the user explicitly wants live rapid-fire reconciliation
+- `browser reconcile`/`click reconcile`/`go reconcile`/`reconcile browser` -> [Browser Reconcile](workflows/browser-reconcile.md) (automate Xero Reconcile UI via agent-browser)
 - `status`/`progress` -> Status Check (below)
 - `quarters` -> Quarter status (below)
 - `new quarter`/`setup quarter`/`download qif` -> [New quarter setup](workflows/new-quarter.md)

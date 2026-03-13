@@ -7,9 +7,8 @@ Use this when you want the lowest-friction reconciliation path:
 3. Upload to Google Sheets via `gsheet-sync.py`
 4. Let Nathan review in Sheets at his own pace
 5. Download, validate, merge updates, and iterate
-6. Export POST bodies only when the CSV is ready
-7. Execute the confirmed queue with `xero-cli`
-8. Rollback if needed with `reconcile-delete`
+6. Export the post queue when the CSV is ready
+7. Browser reconciliation via Xero UI (agent-browser)
 
 ## Variables
 
@@ -21,8 +20,7 @@ FY=25        # Two-digit financial year
 SEAL="data/.quarter-cache-fy${FY}-q${Q}.json"
 CSV="data/reconcile-review-fy${FY}-q${Q}.csv"
 QUEUE="data/.post-queue-fy${FY}-q${Q}.json"
-POST_RUN="data/.post-run-fy${FY}-q${Q}.json"
-DELETE_RUN="data/.delete-run-fy${FY}-q${Q}.json"
+BROWSER_STATE="data/.browser-reconcile-state-fy${FY}-q${Q}.json"
 SPREADSHEET_ID="..."  # Google Sheets ID for this quarter
 GID="..."             # Sheet tab gid
 ```
@@ -100,7 +98,7 @@ python3 scripts/gsheet-sync.py write "$SPREADSHEET_ID" --gid "$GID" --input "$CS
 
 If only ~10 stubborn items remain, rapid-fire terminal review is a valid fallback.
 
-## Phase 5: Prepare and execute the POST run
+## Phase 5: Prepare the post queue
 
 Download the final reviewed CSV from Sheets:
 
@@ -126,54 +124,22 @@ python3 scripts/read-reconcile-csv.py \
 
 If this fails, stop. Xero changed underneath the reviewed CSV, so regenerate or merge from the refreshed seal before writing.
 
-Begin the guarded post run:
+## Phase 6: Browser reconciliation
 
-```bash
-python3 scripts/read-reconcile-csv.py \
-  begin-post-run "$QUEUE" \
-  --output "$POST_RUN" \
-  --confirm "WRITE Q${Q} FY${FY}"
-```
+The Xero API cannot reconcile statement lines -- it can only create orphaned transactions.
+Instead, automate the Xero Reconcile UI via `agent-browser` to create+reconcile in one step.
 
-That writes the preview, queue hash, idempotency keys, and result log path before any real POST execution starts.
+**Full workflow:** See [browser-reconcile.md](browser-reconcile.md)
 
-Dry-run first to preview without writes:
+**Quick summary:**
 
-```bash
-bun run xero-cli reconcile-post \
-  --queue "$QUEUE" --post-run "$POST_RUN" --dry-run
-```
+1. Navigate to Xero Reconcile page: `go.xero.com/BankRec/BankRec.aspx?accountID=$BANK_ACCOUNT_ID`
+2. For each visible statement line (~10 per page):
+   a. Match to queue item by amount + date using `scripts/reconcile-browser-lookup.py`
+   b. If bank rule pre-filled: **validate** contact + account code against queue data first, then click OK
+   c. If empty or mismatch: fill Who/What from queue data, then click OK
+3. Page auto-refreshes with next batch after each OK
+4. Progress saved to `data/.browser-reconcile-state-fy{YY}-q{N}.json` after each OK
+5. Repeat until all Q{N} items are reconciled
 
-Execute the queue:
-
-```bash
-bun run xero-cli reconcile-post \
-  --queue "$QUEUE" --post-run "$POST_RUN" --execute
-```
-
-This command reuses the CLI's normal auth/token handling, preserves the post-run state after every attempt, and appends one JSON log line per posted/retryable/errored row.
-
-## Phase 6: Rollback with reconcile-delete (if needed)
-
-If posted transactions need to be undone, create a delete-run from the post-run state:
-
-```bash
-python3 scripts/read-reconcile-csv.py \
-  begin-delete-run "$POST_RUN" \
-  --output "$DELETE_RUN" \
-  --confirm "DELETE Q${Q} FY${FY}"
-```
-
-Dry-run first:
-
-```bash
-bun run xero-cli reconcile-delete --post-run "$DELETE_RUN" --dry-run
-```
-
-Execute the deletes:
-
-```bash
-bun run xero-cli reconcile-delete --post-run "$DELETE_RUN" --execute
-```
-
-This sets `Status: "DELETED"` on each posted BankTransaction via the Xero API. Works for SPEND and RECEIVE types. After deletion, the same items can be re-posted with a fresh post-run (new idempotency keys).
+**Rollback:** Browser-reconciled transactions cannot be un-reconciled via API. Use "Remove & Redo" in the Xero UI (Account Transactions -> select -> Remove & Redo).
