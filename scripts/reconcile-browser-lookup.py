@@ -54,7 +54,9 @@ def main() -> int:
 
         body = item.get("body", {})
         line_items = body.get("LineItems", [{}])
-        line_amount = line_items[0].get("LineAmount", 0) if line_items else 0
+        # Queue uses UnitAmount (Qty=1), fallback to LineAmount for compatibility
+        li = line_items[0] if line_items else {}
+        line_amount = li.get("UnitAmount", li.get("LineAmount", 0))
         item_date = body.get("Date", "")
         contact_name = body.get("Contact", {}).get("Name", "")
         account_code = line_items[0].get("AccountCode", "") if line_items else ""
