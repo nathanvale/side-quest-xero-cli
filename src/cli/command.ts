@@ -26,6 +26,7 @@ import {
 	EXIT_USAGE,
 	handleCommandErrorWithContext,
 	sanitizeErrorMessage,
+	waitForStdoutDrain,
 	writeError,
 	writeSuccess,
 } from './output'
@@ -1415,6 +1416,7 @@ export async function main(): Promise<void> {
 		void shutdownLogging()
 	})
 	const code = await runCli(process.argv)
+	await waitForStdoutDrain()
 	process.exit(code)
 }
 

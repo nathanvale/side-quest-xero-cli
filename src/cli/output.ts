@@ -21,6 +21,31 @@ export type ExitCode = 0 | 1 | 2 | 3 | 4 | 5 | 130
 
 /** Schema version embedded in all JSON output envelopes. */
 export const SCHEMA_VERSION_OUTPUT = 1
+
+/**
+ * Pending stdout drain promise. When process.stdout.write() returns false
+ * (pipe buffer full), this is set so callers can await it before exiting.
+ * Without this, process.exit() truncates piped output at 64 KB.
+ */
+let stdoutDrainPromise: Promise<void> | null = null
+
+/** Wait for any pending stdout drain. Call before process.exit(). */
+export function waitForStdoutDrain(): Promise<void> {
+	return stdoutDrainPromise ?? Promise.resolve()
+}
+
+/** Write to stdout, tracking drain state for piped output. */
+function stdoutWrite(data: string): void {
+	const ok = process.stdout.write(data)
+	if (!ok) {
+		stdoutDrainPromise = new Promise<void>((resolve) => {
+			process.stdout.once('drain', () => {
+				stdoutDrainPromise = null
+				resolve()
+			})
+		})
+	}
+}
 const MAX_RECOMMENDED_DELAY_MS = 5 * 60 * 1000
 const MAX_SANITIZE_DEPTH = 6
 
@@ -391,7 +416,7 @@ export function writeSuccess<T>(
 		}
 		if (phase) envelope.phase = phase
 		if (activeWarnings) envelope.warnings = activeWarnings
-		process.stdout.write(`${JSON.stringify(envelope)}\n`)
+		stdoutWrite(`${JSON.stringify(envelope)}\n`)
 		return
 	}
 	if (activeWarnings) {
@@ -400,10 +425,10 @@ export function writeSuccess<T>(
 		}
 	}
 	if (ctx.quiet) {
-		process.stdout.write(`${quietLine}\n`)
+		stdoutWrite(`${quietLine}\n`)
 		return
 	}
-	process.stdout.write(`${humanLines.join('\n')}\n`)
+	stdoutWrite(`${humanLines.join('\n')}\n`)
 }
 
 /** Write structured errors to stderr (JSON in machine mode). */
