@@ -10,9 +10,11 @@ DOM patterns and commands for the Xero Reconcile page at `go.xero.com/BankRec/Ba
 
 ## Connection
 
-Use `agent-browser --headed` for ALL commands by default (single-session mode with existing Chrome).
+Use `agent-browser --auto-connect` for ALL commands by default (connects to user's existing Chrome).
 
-For **parallel runs**, use `--session {session_id}` on every command instead of `--headed`:
+**Gotchas:** The agent loading this skill should check project gotchas at `docs/gotchas/browser-agent/go-xero.md` before starting.
+
+For **parallel runs**, use `--session {session_id}` on every command instead of `--auto-connect`:
 
 ```bash
 agent-browser --session xero-1 snapshot 2>&1 | head -80
@@ -28,7 +30,7 @@ If a session is not yet connected, use the `browser-automation` skill's Chrome C
 Refs (`@eN`) change after every DOM mutation. Always take a fresh snapshot before interacting:
 
 ```bash
-agent-browser --headed snapshot 2>&1 | head -80
+agent-browser --auto-connect snapshot 2>&1 | head -80
 ```
 
 Find elements by **role + text**, never by memorised ref numbers:
@@ -47,9 +49,9 @@ When multiple statement lines are visible, each has its own set of Who/What/OK e
 ### CLICK_OK (bank rule pre-validated)
 
 ```bash
-agent-browser --headed snapshot 2>&1 | head -60
+agent-browser --auto-connect snapshot 2>&1 | head -60
 # Find the first OK button ref
-agent-browser --headed click @REF
+agent-browser --auto-connect click @REF
 ```
 
 After clicking, the line disappears. Take a new snapshot before the next line.
@@ -58,17 +60,17 @@ After clicking, the line disappears. Take a new snapshot before the next line.
 
 ```bash
 # 1. Find Who input ref
-agent-browser --headed snapshot 2>&1 | head -80
-agent-browser --headed fill @WHO_REF "Contact Name Here"
+agent-browser --auto-connect snapshot 2>&1 | head -80
+agent-browser --auto-connect fill @WHO_REF "Contact Name Here"
 
 # 2. Find What dropdown ref (fresh snapshot -- refs changed after fill)
-agent-browser --headed snapshot 2>&1 | head -80
-agent-browser --headed type @WHAT_REF "CODE"
-agent-browser --headed press Enter
+agent-browser --auto-connect snapshot 2>&1 | head -80
+agent-browser --auto-connect type @WHAT_REF "CODE"
+agent-browser --auto-connect press Enter
 
 # 3. Find OK button (fresh snapshot again)
-agent-browser --headed snapshot 2>&1 | head -60
-agent-browser --headed click @OK_REF
+agent-browser --auto-connect snapshot 2>&1 | head -60
+agent-browser --auto-connect click @OK_REF
 ```
 
 **Critical:**
@@ -82,14 +84,14 @@ When the What field is pre-filled with a wrong account code:
 
 ```bash
 # 1. Find What dropdown ref (it shows the wrong code)
-agent-browser --headed snapshot 2>&1 | head -80
-agent-browser --headed fill @WHAT_REF ""
-agent-browser --headed type @WHAT_REF "CORRECT_CODE"
-agent-browser --headed press Enter
+agent-browser --auto-connect snapshot 2>&1 | head -80
+agent-browser --auto-connect fill @WHAT_REF ""
+agent-browser --auto-connect type @WHAT_REF "CORRECT_CODE"
+agent-browser --auto-connect press Enter
 
 # 2. Find OK button
-agent-browser --headed snapshot 2>&1 | head -60
-agent-browser --headed click @OK_REF
+agent-browser --auto-connect snapshot 2>&1 | head -60
+agent-browser --auto-connect click @OK_REF
 ```
 
 ## Page Behavior
@@ -112,7 +114,7 @@ SKIPPED | session expired -- user must re-login
 After processing all lines in the batch, take a screenshot:
 
 ```bash
-agent-browser --headed screenshot 2>&1 | head -5
+agent-browser --auto-connect screenshot 2>&1 | head -5
 ```
 
 The reconcile count appears in the tab: "Reconcile (759)". Report this number.

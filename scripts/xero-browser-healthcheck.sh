@@ -20,13 +20,13 @@ if ! command -v agent-browser >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! agent-browser --headed snapshot -i > "$TMP"; then
+if ! agent-browser --auto-connect snapshot -i > "$TMP"; then
   echo "Browser healthcheck failed: unable to capture browser snapshot."
   echo "Open API Explorer and ensure you are logged in, then retry."
   exit 1
 fi
 
-URL="$(agent-browser --headed get url 2>/dev/null || true)"
+URL="$(agent-browser --auto-connect get url 2>/dev/null || true)"
 if ! echo "$URL" | grep -qi "api-explorer.xero.com"; then
   echo "Browser healthcheck failed: not on Xero API Explorer."
   echo "Current URL: ${URL:-unknown}"

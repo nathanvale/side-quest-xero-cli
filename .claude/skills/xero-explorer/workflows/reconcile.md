@@ -548,18 +548,46 @@ Validation rules:
 - If any validation rule fails, abort write phase and return to review
 
 1. **Ensure browser session is valid:**
-```bash
-agent-browser --headed get url
-```
-If not on API Explorer, navigate there and verify login.
 
-2. **Ensure Accounting API is selected** (extract may have left us on Finance API):
-```bash
-agent-browser --headed snapshot -i | grep "Accounting"
-```
-If not selected, switch using the "Switching APIs" pattern from api-explorer-nav.md.
+Dispatch the `xero-extract-agent` for a healthcheck:
 
-3. **Select BankTransactions endpoint and POST operation.**
+```
+Agent(
+  subagent_type="xero-extract-agent",
+  model="sonnet",
+  prompt="""
+TASK: healthcheck
+EXPECT_API: accounting
+"""
+)
+```
+
+If `NEEDS_HUMAN`, relay to user. If the healthcheck shows Finance API instead of Accounting, dispatch:
+
+```
+Agent(
+  subagent_type="xero-extract-agent",
+  model="sonnet",
+  prompt="""
+TASK: ensure-api
+API: accounting
+"""
+)
+```
+
+2. **Select BankTransactions endpoint and POST operation** via the agent:
+
+```
+Agent(
+  subagent_type="xero-extract-agent",
+  model="sonnet",
+  prompt="""
+TASK: post-banktransaction
+BODY: {complete JSON body}
+EXPECT_API: accounting
+"""
+)
+```
 
 ### POST loop
 

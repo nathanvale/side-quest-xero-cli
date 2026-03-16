@@ -94,27 +94,23 @@ python3 scripts/xero-env.py get-bank-account-id 2>/dev/null || true
 
 ### Step 2: Ensure browser session
 
-```bash
-agent-browser --headed get url
-# --expect-api: any | finance | accounting
-#   any: just verify browser is on API Explorer (don't care which API)
-#   finance: verify Finance API is selected
-#   accounting: verify Accounting API is selected
-./scripts/xero-browser-healthcheck.sh --expect-api any
+Dispatch the `xero-extract-agent` to verify the browser is ready:
+
+```
+Agent(
+  subagent_type="xero-extract-agent",
+  model="sonnet",
+  prompt="""
+TASK: healthcheck
+EXPECT_API: any
+"""
+)
 ```
 
-If not on API Explorer:
-```bash
-agent-browser --headed open "https://api-explorer.xero.com/"
-agent-browser --headed wait 3000
-```
-
-Check for the tenant selector to confirm we're logged in:
-```bash
-agent-browser --headed snapshot -i | grep "Tenant"
-```
-
-If no tenant visible, tell user to log in manually and wait.
+Parse the Browser Report:
+- `SUCCESS` -> continue to Step 3
+- `NEEDS_HUMAN` -> relay the reason to the user (e.g., "Please log in to Xero API Explorer in your browser"), wait, then re-dispatch healthcheck
+- `FAILED` -> investigate the reason, attempt recovery (open API Explorer URL manually), then re-dispatch
 
 ### Step 3: CLI auth + tenant preflight
 
@@ -215,35 +211,9 @@ python3 scripts/xero-cli-extract.py payments
 
 #### 4e: BankStatementsPlus (Finance API)
 
-This step uses the **Finance API**, not the Accounting API. Follow the "Switching APIs" pattern from api-explorer-nav.md.
+This step uses the **Finance API**, not the Accounting API. The `xero-extract-agent` handles the entire browser sequence: switching to Finance API, filling parameters, making the request, copying the response, and switching back to Accounting API.
 
-1. **Switch to Finance API:**
-```bash
-agent-browser --headed snapshot -i | grep "API"
-# Replace @API_REF with the current API selector ref from snapshot:
-agent-browser --headed click @API_REF
-agent-browser --headed wait 500
-agent-browser --headed find role button click --name "Select API Xero Finance API"
-agent-browser --headed wait 1000
-agent-browser --headed snapshot -i
-./scripts/xero-browser-healthcheck.sh --expect-api finance
-```
-
-If this healthcheck fails after API switch, do not continue.
-- Treat it as likely session expiry or wrong API.
-- Ask user to re-authenticate in the same browser session.
-- Re-run Step 4e from API selection.
-
-2. **Select endpoint:** BankStatementsPlus
-
-3. **Select operation:** Get Bank Statements Plus
-
-4. **Fill parameters** (see "Filling Parameters" in api-explorer-nav.md):
-   - `BankAccountID`: use `$BANK_ACCOUNT_ID` from your environment (must match selected tenant)
-   - `FromDate`: Use the value from `python3 scripts/manage-quarters.py dates Q FY` (Step 0)
-   - `ToDate`: Use the value from `python3 scripts/manage-quarters.py dates Q FY` (Step 0)
-
-Before filling the form:
+Before dispatching, ensure BANK_ACCOUNT_ID is available:
 
 ```bash
 if [ -z "${BANK_ACCOUNT_ID:-}" ]; then
@@ -258,27 +228,30 @@ if [ -z "${BANK_ACCOUNT_ID:-}" ]; then
 fi
 ```
 
-5. **Make request**, wait 15s, copy response:
-```bash
-agent-browser --headed wait 1000
-agent-browser --headed find role button click --name "Make request"
-agent-browser --headed wait 15000
-agent-browser --headed find role button click --name "response-body-copy"
-sleep 1
-if clipboard_to_file "$TMPDIR/xero-bankstatementsplus-raw.json"; then
-  echo "Saved clipboard response to $TMPDIR/xero-bankstatementsplus-raw.json"
-else
-  echo "Clipboard tools unavailable. Save the response body manually to $TMPDIR/xero-bankstatementsplus-raw.json"
-  exit 1
-fi
+Dispatch the extraction agent:
+
+```
+Agent(
+  subagent_type="xero-extract-agent",
+  model="sonnet",
+  prompt="""
+TASK: extract-bankstatementsplus
+BANK_ACCOUNT_ID: {BANK_ACCOUNT_ID}
+FROM_DATE: {FromDate from Step 0}
+TO_DATE: {ToDate from Step 0}
+TMPDIR: {TMPDIR}
+"""
+)
 ```
 
-If the copied payload is login HTML or non-JSON, treat this as auth expiry:
-- stop conversion,
-- ask user to re-authenticate in the same `agent-browser` session,
-- rerun Step 4e from API selection.
+Parse the Browser Report:
+- `SUCCESS` -> the raw response is at `findings.raw_file_path`. Continue to envelope inspection.
+- `NEEDS_HUMAN` -> relay to user (auth expiry). After re-login, re-dispatch.
+- `FAILED` -> investigate reason, attempt recovery.
 
-6. **Inspect response structure first** -- the envelope is uncertain:
+After successful extraction, continue with envelope inspection and conversion:
+
+1. **Inspect response structure** -- the envelope is uncertain:
 ```bash
 python3 scripts/xero-convert.py inspect-envelope "$TMPDIR/xero-bankstatementsplus-raw.json"
 ```
@@ -306,68 +279,16 @@ python3 scripts/xero-convert.py write-envelope-profile \
   "data/.xero-bankstatementsplus-envelope.json"
 ```
 
-7. **Convert + update quarter state** (single command):
+2. **Convert + update quarter state** (single command):
 ```bash
 ./scripts/xero-statement-lines-finalize.sh "$Q" "$FY" "$TMPDIR/xero-bankstatementsplus-raw.json"
 ```
 
-8. **Switch back to Accounting API** (clean session state):
-```bash
-agent-browser --headed snapshot -i | grep "API"
-# Replace @API_REF with the current API selector ref from snapshot:
-agent-browser --headed click @API_REF
-agent-browser --headed wait 500
-agent-browser --headed find role button click --name "Select API Xero Accounting API"
-agent-browser --headed wait 1000
-agent-browser --headed snapshot -i
-./scripts/xero-browser-healthcheck.sh --expect-api accounting
-```
+### Step 5: API Explorer navigation (via agent dispatch)
 
-### Step 5: API Explorer navigation pattern
+Browser-based API Explorer navigation is now handled by the `xero-extract-agent`. The agent loads the `xero-api-explorer` skill which contains all dropdown cascade patterns, retry logic, and clipboard handling recipes.
 
-For each endpoint switch, use this exact sequence:
-
-```bash
-# 1. Click endpoint dropdown (ref may vary -- snapshot first)
-agent-browser --headed snapshot -i | grep "Endpoint"
-# Replace @ENDPOINT_REF with the current endpoint selector ref from snapshot:
-agent-browser --headed click @ENDPOINT_REF
-
-# 2. Wait for dropdown to open
-agent-browser --headed wait 500
-
-# 3. Select endpoint by exact name
-agent-browser --headed find role button click --name "Select endpoint ENDPOINT_NAME" --exact
-
-# 4. Wait, then open operation dropdown
-agent-browser --headed wait 500
-agent-browser --headed snapshot -i | grep "Operation"
-# Replace @OPERATION_REF with the current operation selector ref from snapshot:
-agent-browser --headed click @OPERATION_REF
-
-# 5. Select operation by exact name
-agent-browser --headed wait 500
-agent-browser --headed find role button click --name "Select operation OPERATION_NAME" --exact
-
-# 6. Make request
-agent-browser --headed wait 1000
-agent-browser --headed find role button click --name "Make request"
-
-# 7. Wait for response, then copy
-agent-browser --headed wait WAIT_MS
-agent-browser --headed find role button click --name "response-body-copy"
-sleep 1
-if clipboard_to_file "$TMPDIR/OUTPUT_FILE"; then
-  echo "Saved clipboard response to $TMPDIR/OUTPUT_FILE"
-else
-  echo "Clipboard tools unavailable. Save response manually to $TMPDIR/OUTPUT_FILE"
-  exit 1
-fi
-```
-
-**Critical:** Always `wait 500` between dropdown interactions. The UI needs time to render options.
-
-**Critical:** Always snapshot to get current refs before clicking. Refs change after navigation.
+For any additional API Explorer browser operations not covered by the task types above, dispatch the agent with an appropriate task. See the [API Explorer navigation reference](../references/api-explorer-nav.md) for the underlying patterns the agent uses.
 
 ### Step 6: Clean up and report
 

@@ -9,7 +9,9 @@ tools:
   - Bash
   - Read
   - Grep
+  - Write
 color: green
+memory: project
 ---
 
 # Xero Reconcile Agent
@@ -24,9 +26,11 @@ Execute a batch of pre-validated reconciliation actions on the Xero Reconcile pa
 - NEVER click OK without the orchestrator's explicit instruction to do so
 - NEVER skip a line without reporting it as SKIPPED with a reason
 - ONLY use `agent-browser` via Bash -- no MCP browser tools
-- Use `--headed` by default, or `--session {session_id}` if provided by orchestrator
-- Maximum commands per batch: 10 × batch_size (default batch_size=3, so 30 commands max)
-- If session expires mid-batch, use browser-automation skill auth flows to re-authenticate
+- Use `--auto-connect` by default, or `--session {session_id}` if provided by orchestrator
+- Maximum commands per batch: 10 x batch_size (default batch_size=3, so 30 commands max)
+- If session expires mid-batch, return NEEDS_HUMAN immediately
+- Before starting, check `docs/gotchas/browser-agent/go-xero.md` for known issues
+- If you discover a new gotcha, append it to the gotchas file
 
 ## Input Format
 
@@ -47,16 +51,30 @@ Actions:
 
 ## Workflow
 
-1. Take a snapshot to orient (`agent-browser --headed snapshot 2>&1 | head -80`)
-2. For each line in order, execute the specified action (see xero-reconcile skill for recipes)
-3. After each OK click, take a fresh snapshot -- refs change after every DOM mutation
-4. After all lines processed, take a final screenshot and read the reconcile count from the tab header
+1. Read gotchas file: `docs/gotchas/browser-agent/go-xero.md`
+2. Take a snapshot to orient (`agent-browser --auto-connect snapshot 2>&1 | head -80`)
+3. For each line in order, execute the specified action (see xero-reconcile skill for recipes)
+4. After each OK click, take a fresh snapshot -- refs change after every DOM mutation
+5. After all lines processed, take a final screenshot and read the reconcile count from the tab header
 
 ## Output Format
+
+Return both the legacy RESULT line and a Browser Report:
 
 ```
 RESULT: [done]/[total] | count: [new_reconcile_count]
 LINE 1: OK | [description]
 LINE 2: OK | [description]
 LINE 3: SKIPPED | [reason]
+
+BROWSER_REPORT
+status: SUCCESS | PARTIAL | FAILED | NEEDS_HUMAN
+task: reconcile-batch
+commands_used: {count}
+findings:
+  done: {done_count}
+  total: {total_count}
+  reconcile_count: {new_reconcile_count}
+gotchas_discovered: {count}
+reason: {if FAILED or NEEDS_HUMAN, explain why}
 ```

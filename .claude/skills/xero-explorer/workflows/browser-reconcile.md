@@ -22,7 +22,7 @@ Opus (orchestrator)                    Haiku (executor)
 ## Prerequisites
 
 1. **Post queue ready:** `data/.post-queue-fy{YY}-q{N}.json` exists with all APPROVE'd items
-2. **Browser session active:** `agent-browser --headed get url` returns a valid page
+2. **Browser session active:** `agent-browser --auto-connect get url` returns a valid page
 3. **Xero logged in:** User is authenticated in the Xero browser session
 4. **Bank account ID known:** From `.xero-config.json` or seal
 
@@ -41,7 +41,7 @@ BATCH_SIZE=3  # Lines per agent dispatch (configurable)
 ### Step 1: Navigate
 
 ```bash
-agent-browser --headed navigate "https://go.xero.com/BankRec/BankRec.aspx?accountID=$BANK_ACCOUNT_ID"
+agent-browser --auto-connect navigate "https://go.xero.com/BankRec/BankRec.aspx?accountID=$BANK_ACCOUNT_ID"
 ```
 
 ### Step 2: Screenshot and parse visible lines
@@ -93,10 +93,11 @@ LINE 3: CLEAR_AND_FILL What="485"
 
 ### Step 5: Verify and continue
 
-Parse the agent's result:
-- Check the new reconcile count dropped by the expected amount
+Parse the agent's result. The agent returns both a legacy `RESULT:` line and a `BROWSER_REPORT`:
+- Check the new reconcile count dropped by the expected amount (from `findings.reconcile_count`)
+- If `status: NEEDS_HUMAN`, relay to user (session expired) and wait for re-login
 - If any lines reported SKIPPED, investigate
-- If session expired, ask user to re-login, then resume
+- If `gotchas_discovered > 0`, the agent appended new issues to `docs/gotchas/browser-agent/go-xero.md`
 - Take a fresh screenshot for the next batch
 - Show progress (see ADHD UX below)
 
@@ -145,7 +146,7 @@ Agent(session_id="xero-1", lines=[1,2,3])  ← page 1
 Agent(session_id="xero-2", lines=[4,5,6])  ← page 2 (different browser tab)
 ```
 
-Each agent uses `agent-browser --session {session_id}` instead of `--headed`. Requires multiple Xero tabs open to different date-filtered views of the Reconcile page.
+Each agent uses `agent-browser --session {session_id}` instead of `--auto-connect`. Requires multiple Xero tabs open to different date-filtered views of the Reconcile page.
 
 ## Rollback
 

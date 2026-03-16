@@ -266,15 +266,29 @@ python3 scripts/manage-quarters.py next-action
 Safety default:
 - If user is uncertain, run reconcile in dry-run first (`--dry-run`) and require explicit write interlock phrase before POST.
 
+## Agent Architecture
+
+Browser automation is delegated to specialized agents:
+- **`xero-extract-agent`** (Sonnet): API Explorer extraction and POST operations. Handles dropdown cascades, parameter filling, clipboard capture, and API switching.
+- **`xero-reconcile-agent`** (Haiku): Reconcile page DOM execution. Fills Who/What, clicks OK, reports count.
+
+These agents return structured Browser Reports (`SUCCESS`/`PARTIAL`/`FAILED`/`NEEDS_HUMAN`). Opus (this skill) makes all financial decisions; agents only execute pre-validated actions.
+
+Both agents accumulate gotchas in `docs/gotchas/browser-agent/` for their respective domains.
+
 ## Browser Prerequisites
 
-Before either workflow, verify the browser session:
+Before either workflow, verify the browser session by dispatching a healthcheck:
 
-```bash
-agent-browser --headed get url
+```
+Agent(
+  subagent_type="xero-extract-agent",
+  model="sonnet",
+  prompt="TASK: healthcheck\nEXPECT_API: any"
+)
 ```
 
-- If not on `api-explorer.xero.com`, navigate there and check the user is logged in
+- If `NEEDS_HUMAN`, tell the user to log in manually then resume
 - If session expired, tell the user to log in manually then resume
 
 ## Success Criteria
