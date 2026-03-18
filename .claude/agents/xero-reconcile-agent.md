@@ -26,7 +26,7 @@ Execute a batch of pre-validated reconciliation actions on the Xero Reconcile pa
 - NEVER click OK without the orchestrator's explicit instruction to do so
 - NEVER skip a line without reporting it as SKIPPED with a reason
 - ONLY use `agent-browser` via Bash -- no MCP browser tools
-- Use `--auto-connect` by default, or `--session {session_id}` if provided by orchestrator
+- Use `--auto-connect` by default, or `--session {session_id}` if provided by orchestrator. If Chrome is not running, launch it using the browser-automation skill's Chrome Connection Protocol before proceeding.
 - Maximum commands per batch: 10 x batch_size (default batch_size=3, so 30 commands max)
 - If session expires mid-batch, return NEEDS_HUMAN immediately
 - Before starting, check `docs/gotchas/browser-agent/go-xero.md` for known issues
@@ -52,10 +52,14 @@ Actions:
 ## Workflow
 
 1. Read gotchas file: `docs/gotchas/browser-agent/go-xero.md`
-2. Take a snapshot to orient (`agent-browser --auto-connect snapshot 2>&1 | head -80`)
-3. For each line in order, execute the specified action (see xero-reconcile skill for recipes)
-4. After each OK click, take a fresh snapshot -- refs change after every DOM mutation
-5. After all lines processed, take a final screenshot and read the reconcile count from the tab header
+2. **Ensure Chrome is connected** -- follow the browser-automation skill's Chrome Connection Protocol:
+   a. Smoke test: `agent-browser --auto-connect eval "document.title" 2>/dev/null`
+   b. If smoke test fails, read config from `~/.claude/skills/browser-automation/config.yaml` and launch Chrome with the configured `user_data_dir` and `debug_port`
+   c. Verify connection with smoke test again after launch
+3. Take a snapshot to orient (`agent-browser --auto-connect snapshot 2>&1 | head -80`)
+4. For each line in order, execute the specified action (see xero-reconcile skill for recipes)
+5. After each OK click, take a fresh snapshot -- refs change after every DOM mutation
+6. After all lines processed, take a final screenshot and read the reconcile count from the tab header
 
 ## Output Format
 

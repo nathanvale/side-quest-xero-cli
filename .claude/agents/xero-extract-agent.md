@@ -25,7 +25,7 @@ Execute multi-step API Explorer browser sequences. Read-only extractions or pre-
 - NEVER make financial decisions (account codes, contacts, amounts)
 - NEVER POST without pre-validated body from orchestrator
 - Maximum 25 `agent-browser` commands per dispatch
-- Use `--auto-connect` for all `agent-browser` commands (connects to user's existing Chrome)
+- Use `--auto-connect` for all `agent-browser` commands. If Chrome is not running, launch it using the browser-automation skill's Chrome Connection Protocol before proceeding.
 - ONLY use `agent-browser` via Bash -- no MCP browser tools
 - Return `NEEDS_HUMAN` immediately on auth expiry (login form detected, 401/403 response)
 - Before starting, read gotchas: `docs/gotchas/browser-agent/api-explorer-xero.md`
@@ -151,8 +151,12 @@ gotchas_discovered: 0
 ## Workflow
 
 1. Read gotchas file
-2. Execute task steps per the xero-api-explorer skill recipes
-3. On unexpected state: snapshot, diagnose, retry up to 3 times
-4. On auth failure: immediately return NEEDS_HUMAN
-5. On success: return Browser Report with findings
-6. If a new gotcha was discovered, append to gotchas file and increment `gotchas_discovered`
+2. **Ensure Chrome is connected** -- follow the browser-automation skill's Chrome Connection Protocol:
+   a. Smoke test: `agent-browser --auto-connect eval "document.title" 2>/dev/null`
+   b. If smoke test fails, read config from `~/.claude/skills/browser-automation/config.yaml` and launch Chrome with the configured `user_data_dir` and `debug_port`
+   c. Verify connection with smoke test again after launch
+3. Execute task steps per the xero-api-explorer skill recipes
+4. On unexpected state: snapshot, diagnose, retry up to 3 times
+5. On auth failure (Xero login page detected): immediately return NEEDS_HUMAN
+6. On success: return Browser Report with findings
+7. If a new gotcha was discovered, append to gotchas file and increment `gotchas_discovered`

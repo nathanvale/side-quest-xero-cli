@@ -10,19 +10,26 @@ Patterns for driving the Xero API Explorer at `api-explorer.xero.com` via `agent
 
 ## Connection
 
-Use `agent-browser --auto-connect` for ALL commands. This connects to the user's existing Chrome session.
+Use `agent-browser --auto-connect` for ALL commands.
 
-Smoke test:
+Before any browser interaction, ensure Chrome is connected using the browser-automation skill's Chrome Connection Protocol:
 
-```bash
-agent-browser --auto-connect get url
-```
+1. **Smoke test:** `agent-browser --auto-connect eval "document.title" 2>/dev/null`
+2. **If smoke test fails**, read config and launch Chrome:
+   ```bash
+   CONFIG="$HOME/.claude/skills/browser-automation/config.yaml"
+   # Read chrome.binary_path, chrome.user_data_dir, chrome.debug_port from config
+   # Then launch (see browser-automation skill for full launch recipe)
+   ```
+3. **Verify** with smoke test again after launch
 
-Full healthcheck:
+Once connected, run the Xero-specific healthcheck:
 
 ```bash
 ./scripts/xero-browser-healthcheck.sh --expect-api any
 ```
+
+If the healthcheck shows a Xero login page instead of the API Explorer, return `NEEDS_HUMAN` -- Xero auth is manual (no automated login flow).
 
 ## Gotchas
 
