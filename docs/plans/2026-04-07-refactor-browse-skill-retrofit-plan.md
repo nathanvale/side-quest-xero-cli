@@ -115,18 +115,24 @@ The `browser-automation` plugin (v0.8.1) now ships a canonical `/browse` dispatc
 
 - **Parallel reconcile posture.** Resolved: drop parallelism, full retrofit. (See Key Technical Decisions.)
 - **Service config scope.** Resolved: global `~/.config/side-quest/browser-automation/config.yaml`.
-- **Auth mode.** Resolved: `auth: password` + 1Password op_item.
+- **Auth mode.** Resolved during Phase 1 bootstrap: `auth: password_totp` + 1Password op_item. Both `go-xero` and `api-explorer-xero` share the same `op_item` UUID `xqeqosfunrvunkb3tpwvioftqa` in vault `API Credentials` (item title `login.xero.com (nathanvale73@gmail.com)`). The plan originally listed `password` with `password_totp` as the MFA upgrade path; the 1Password item showed an active TOTP field before the first run, so we set `password_totp` directly when adding both service entries.
 - **Upstream follow-up venue.** Resolved: MEMORY.md only, no upstream issue.
 - **Retirement trigger.** Resolved: after one full quarter dry-run through `/browse` passes cleanly.
 
+### Resolved During Execution
+
+- **Exact Xero `op_item` UUID.** `xqeqosfunrvunkb3tpwvioftqa` (vault `API Credentials`). Confirmed via `op item get` against the title `login.xero.com (nathanvale73@gmail.com)` before Unit 1 bootstrap.
+- **MFA posture.** `password_totp` (TOTP confirmed in 1Password before bootstrap; not yet exercised end-to-end because both bootstraps were warm sessions).
+- **Whether `go-xero` needs a separate `login.js` from `api-explorer-xero`.** Both bootstraps used warm sessions — TOTP never fired and the engine's built-in `password_totp` flow was sufficient. No separate `login.js` is required for either domain at this stage. Cold-start TOTP path is still unvalidated and will be exercised on the next true cold session.
+
 ### Deferred to Implementation
 
-- **Exact Xero `op_item` UUID.** Captured by Nathan during Phase 1 bootstrap and added to `~/.config/side-quest/browser-automation/config.yaml` then. Not knowable from the plan.
-- **MFA posture.** Default is `auth: password`; upgrade to `auth: password_totp` only if Xero login prompts for TOTP during Phase 1 bootstrap. Decided at first login.
 - **Whether `scripts/xero-browser-healthcheck.sh` has any external callers.** Resolved by `grep -r xero-browser-healthcheck .claude src docs scripts` immediately before Unit 6's deletion step.
-- **Whether `go-xero` needs a separate `login.js` from `api-explorer-xero`.** The two subdomains may share an SSO flow or may diverge. Decided after observing the actual login forms during Phase 1 bootstrap.
 - **Exact selector fingerprints for the Reconcile page.** Captured during the first real reconcile-batch run via `/browse`'s staged-candidate flow; promoted from `candidate` to `validated` after two successful runs.
 - **Whether the new `/browse`-driven extract path produces a byte-identical NDJSON to the current path.** Likely yes since both call the same Finance API endpoint, but validated empirically during Unit 5 verification.
+- **Cold-start TOTP path.** Both Phase 1 bootstraps ran against a warm session and never exercised the TOTP challenge. The next genuinely cold session (cookie clear, expiry, or the first run after a long gap) will be the first end-to-end validation of `auth: password_totp`. Track in MEMORY.md when Unit 7 runs.
+- **`!rrT86` tenant-scoped reconcile URL.** The `go-xero` bootstrap observed the post-auth dashboard at `go.xero.com/app/!rrT86/homepage`. The legacy `xero-reconcile` skill used `go.xero.com/BankRec/BankRec.aspx`; the actual Reconcile URL on this tenant may follow `go.xero.com/app/!rrT86/BankRec/...` instead. The first `reconcile-click-ok` run in Unit 4 must verify which pattern is live and stage the result as a new domain gotcha via that run's normal write-back. See Unit 4 approach for detail.
+- **`expected_identity:` frontmatter parity.** `api-explorer-xero.md` has `expected_identity: nathanvale73@gmail.com` in frontmatter; `go-xero.md` does not. Engine falls back to service config so this is not load-bearing, but worth fixing during a future `go-xero` run via staged write-back. Cosmetic deferred polish; track in MEMORY.md when Unit 7 runs.
 
 ## High-Level Technical Design
 
@@ -141,8 +147,8 @@ flowchart TD
     CLI["agent-browser CLI"]
 
     subgraph Domains["~/.config/side-quest/browser-automation/domains/"]
-        APIX["api-explorer-xero/<br/>session: api-explorer-xero<br/>auth: password<br/>flows: healthcheck, extract-bankstatementsplus,<br/>post-banktransaction, ensure-api"]
-        GOX["go-xero/<br/>session: go-xero<br/>auth: password<br/>flows: reconcile-fill,<br/>reconcile-clear-and-fill,<br/>reconcile-click-ok"]
+        APIX["api-explorer-xero/<br/>session: api-explorer-xero<br/>auth: password_totp<br/>flows: healthcheck, extract-bankstatementsplus,<br/>post-banktransaction, ensure-api"]
+        GOX["go-xero/<br/>session: go-xero<br/>auth: password_totp<br/>flows: reconcile-fill,<br/>reconcile-clear-and-fill,<br/>reconcile-click-ok"]
     end
 
     Opus -->|"extract Q{N} FY{YY}"| Browse
@@ -162,9 +168,15 @@ Three structural shifts vs today:
 
 ## Implementation Units
 
-- [ ] **Unit 1: Bootstrap canonical domain scaffolds (Nathan-driven, prerequisite)**
+- [x] **Unit 1: Bootstrap canonical domain scaffolds (Nathan-driven, prerequisite)** ✅ Completed 2026-04-07
 
-**Goal:** Create the two canonical managed-domain folders for `api-explorer.xero.com` and `go.xero.com` via `/browse`'s new-domain protocol, with `auth: password` service entries pointing at the Xero 1Password item.
+**Outcome:** Both service entries added via `/ba:setup add-service` (one shared `op_item` UUID, `auth: password_totp` chosen up-front because the 1Password item already had a TOTP field). Both domains scaffolded via `/browse <domain> bootstrap`:
+- `xero-cli-bootstrap-2026-04-07-001` — `go-xero` — Status `SUCCESS`, identity matched, warm session, 751 reconcile items observed.
+- `xero-cli-bootstrap-2026-04-07-002` — `api-explorer-xero` — Status `SUCCESS`, identity matched, warm session, all 9 APIs visible (Finance API confirmed selectable). Also discovered four bonus gotchas live (G-004 ref instability, G-005 fill-over-type globally, G-006 partner scope, G-007 dropdown gating cascade).
+
+Both domain markdown files exist with `domain_format_version: 1` and have a `bootstrap-observe` row in their `## Iteration Log`. See [`Resolved During Execution`](#resolved-during-execution) above for the resolved questions and [`Deferred to Implementation`](#deferred-to-implementation) for the two follow-ups (cold-start TOTP validation, `!rrT86` URL pattern).
+
+**Goal:** Create the two canonical managed-domain folders for `api-explorer.xero.com` and `go.xero.com` via `/browse`'s new-domain protocol, with `auth: password_totp` service entries pointing at the Xero 1Password item.
 
 **Requirements:** R1 (prerequisite — `/browse` cannot dispatch to a domain that doesn't exist).
 
@@ -193,12 +205,23 @@ Three structural shifts vs today:
 **Verification:**
 - `~/.config/side-quest/browser-automation/domains/api-explorer-xero/api-explorer-xero.md` exists with `domain_format_version: 1` in the frontmatter.
 - `~/.config/side-quest/browser-automation/domains/go-xero/go-xero.md` exists with `domain_format_version: 1` in the frontmatter.
-- `~/.config/side-quest/browser-automation/config.yaml` contains both `api-explorer-xero` and `go-xero` service entries with `auth: password`, `op_item`, and `op_vault: "API Credentials"`.
+- `~/.config/side-quest/browser-automation/config.yaml` contains both `api-explorer-xero` and `go-xero` service entries with `auth: password_totp`, `op_item`, and `op_vault: "API Credentials"`.
 - A `bootstrap-observe` run has been recorded in each domain's `## Iteration Log`.
 
 ---
 
-- [ ] **Unit 2: Migrate gotchas + load-bearing learnings into domain markdowns**
+- [x] **Unit 2: Migrate gotchas + load-bearing learnings into domain markdowns** ✅ Completed 2026-04-07
+
+**Outcome:** Folded into Unit 1's bootstrap runs. Both `bootstrap-observe` agents staged the three load-bearing MEMORY.md gotchas (UUID/CSS-selector, git-safety hook, sync/foreground execution) as `validated` write-back candidates with provenance `xero-cli project memory pre-bootstrap`, and both runs committed them to disk. The `api-explorer-xero` run also discovered four bonus gotchas live during its observation pass (G-004 ref instability between dropdown changes, G-005 prefer-fill-over-type globally, G-006 finance-API partner-only scope, G-007 endpoint+operation dropdowns gated on API selection). Both source repo gotcha files (`docs/gotchas/browser-agent/{api-explorer-xero,go-xero}.md`) were empty stubs containing only a header comment, so there was no content to migrate beyond the MEMORY.md learnings.
+
+**Verification gate results:**
+
+| Gate | Result |
+|---|---|
+| `grep "type.*UUID\|CSS selector"` against `go-xero.md` | ✅ 4 hits at lines 42, 53, 58, 79 |
+| Source repo gotchas content present in destination | ✅ Trivial — both source files were empty stubs |
+| Three MEMORY.md learnings present in `go-xero.md` | ✅ G-001 (UUID), G-002 (git-safety), G-003 (sync/foreground) |
+| Three MEMORY.md learnings present in `api-explorer-xero.md` | ✅ G-001, G-002, G-003 (plus G-004–G-007 discovered live) |
 
 **Goal:** Move the existing repo gotchas into the canonical domain files as the starting `## Domain Gotchas` content, and add the three load-bearing learnings from MEMORY.md that aren't yet documented anywhere.
 
@@ -320,6 +343,10 @@ Each existing recipe maps to one target flow:
 - Refs (`@eN`) change after every DOM mutation — every step takes a fresh snapshot before interacting.
 - `clear-and-fill` flow uses `fill @WHAT_REF ""` to clear, never `type ""`.
 
+**Open question to settle on the first run — `!rrT86` tenant URL pattern:** The `go-xero` bootstrap (run `xero-cli-bootstrap-2026-04-07-001`) observed the post-auth dashboard URL as `go.xero.com/app/!rrT86/homepage`, where `!rrT86` is the tenant/org slug for "Arthur & B Consulting". The legacy `xero-reconcile` skill's recipes use `go.xero.com/BankRec/BankRec.aspx` (no tenant slug). The first `reconcile-click-ok` run **must** verify which URL pattern is live: legacy `BankRec.aspx` versus tenant-scoped `app/!rrT86/BankRec/...`. Whichever wins becomes the canonical URL in `selectors.yaml`'s `page_fingerprint` and is staged as a domain gotcha (sourced from this run) explaining why the legacy path is no longer authoritative. Until this is settled, `selectors.yaml` should NOT hard-code either URL.
+
+**Conflict to resolve on the first run — G-001 vs G-004 (`fill` vs `type` for the What dropdown):** `go-xero.md` G-004 (sourced from prior xero-cli notes) says use `type @ref "value"` + `press Enter` for the React What dropdown. G-001 (sourced from prior xero-cli notes) says `type` breaks on UUID values because they're parsed as CSS selectors. Whether these conflict depends on whether real account-code values contain UUID-shaped tokens. The first `reconcile-fill` run must determine which gotcha takes precedence in practice — most likely both are correct in their own context (use `type+Enter` for short numeric account codes, fall back to `fill` for any value matching UUID shape). G-004 stays at maturity `candidate` until the first run validates it.
+
 **Single-worker constraint:** Both playbooks declare `concurrency: single` and reference the same session name (`go-xero`). No `worker-N` suffix variants.
 
 **Execution note:** Single worker only. Parallel reconcile is parked until upstream supports same-domain sessions; tracked in MEMORY.md after Unit 7.
@@ -341,7 +368,9 @@ Each existing recipe maps to one target flow:
 **Verification:**
 - All three target flows are listed in `go-xero.md`'s `## Target Flows` section.
 - A test reconcile-batch of 1–3 lines run via `/browse` decreases the reconcile tab counter by the expected amount, verified by manual UI inspection.
-- `selectors.yaml` includes a `page_fingerprint` for the BankRec page (URL pattern `go.xero.com/BankRec/BankRec.aspx`, required text "Reconcile (").
+- `selectors.yaml` includes a `page_fingerprint` for the BankRec page with the verified URL pattern (legacy `go.xero.com/BankRec/BankRec.aspx` OR tenant-scoped `go.xero.com/app/!rrT86/BankRec/...` — settled empirically on the first run, see Open question above) and the required text "Reconcile (".
+- `go-xero.md`'s `## Domain Gotchas` section includes a new entry recording the verified BankRec URL pattern with provenance from the first `reconcile-click-ok` run.
+- G-004 is promoted from `candidate` to `validated` (or restated) based on the first `reconcile-fill` run's empirical evidence on the `fill` vs `type` question.
 
 ---
 
@@ -448,8 +477,10 @@ Each existing recipe maps to one target flow:
 
 - **`feedback_browse_retrofit.md`** (feedback type): Lead with the rule — "All xero browser dispatch goes through `/browse` (`browser-automation:ba-browse`); never invoke `agent-browser` CLI directly from xero-cli workflows or skills." **Why:** retired bespoke agents to gain identity verification, structured reports, and single-source-of-truth domain knowledge. **How to apply:** when editing `.claude/skills/xero-explorer/workflows/*` or thinking about adding browser automation, dispatch via `Skill("browser-automation:ba-browse", ...)`.
 - **`project_browse_parallel_followup.md`** (project type): Lead with the constraint — "Reconcile is single-worker because `/browse` forbids two agents on the same domain. Parallel reconcile restoration is gated on upstream support for same-domain parallel sessions (vercel-labs/agent-browser#1068, no timeline)." **Why:** plugin v0.8.1 enforces this for cookie/auth race safety. **How to apply:** if reconcile throughput becomes a bottleneck again, revisit by either filing the upstream issue or accepting the constraint indefinitely.
-- **MEMORY.md index**: Add two new entries under appropriate sections; remove or update any stale references to retired agents in the existing entries.
-- **`.claude/CLAUDE.md`**: Add a short paragraph under a new "Browser Automation" section explaining the `/browse`-only flow, the single-worker constraint, and pointing at the two new memory files.
+- **`project_browse_cold_start_totp.md`** (project type, optional): Lead with the constraint — "Both Phase 1 bootstraps ran against a warm Xero session and never exercised `auth: password_totp` end-to-end. Cold-start TOTP path is unvalidated until the first run after a cookie clear or expiry." **Why:** masks a real risk that TOTP automation may misbehave. **How to apply:** when a `/browse` run on `go-xero` or `api-explorer-xero` lands cold, watch for TOTP failures and capture them as a domain gotcha. Drop this memory once the cold path has been observed twice cleanly.
+- **MEMORY.md index**: Add two-to-three new entries under appropriate sections; remove or update any stale references to retired agents in the existing entries.
+- **`.claude/CLAUDE.md`**: Add a short paragraph under a new "Browser Automation" section explaining the `/browse`-only flow, the single-worker constraint, and pointing at the new memory files.
+- **Cosmetic parity fix:** During a future `/browse go.xero.com` run, stage a write-back that adds `expected_identity: nathanvale73@gmail.com` to `go-xero.md`'s frontmatter so it matches `api-explorer-xero.md`. Engine falls back to service config so this is not load-bearing — purely consistency.
 
 **Patterns to follow:**
 - Existing memory file frontmatter and "Why / How to apply" structure documented in the harness `auto memory` instructions.
@@ -485,11 +516,12 @@ Each existing recipe maps to one target flow:
 | `/browse` dispatch is materially slower than direct `agent-browser` calls due to extra agent hops, making quarter extracts painful. | Measure on the first quarter dry-run (Unit 5 verification). If unacceptable, escalate before Unit 6 retirement. The plan is reversible until Unit 6. |
 | Single-worker reconcile is too slow for active Q4 FY25 pipeline (currently mid-flight per MEMORY.md). | Run the Q4 FY25 reconcile to completion via the legacy path *before* starting Unit 5. Then retrofit cleanly during a quieter window. (Add to Phase 1 prerequisites.) |
 | Migrated playbooks miss subtle behaviour from the imperative skill recipes (e.g., timing waits, fresh-snapshot cadence). | Stage assets as `candidate`, not `validated`. Promote only after two successful runs. The canonical contract enforces this. |
-| Xero's login flow uses MFA or hardware key, breaking the `auth: password` plan. | Phase 1 bootstrap surfaces this immediately. Fallback to `auth: password_totp` if 1Password TOTP works; otherwise accept `NEEDS_HUMAN` pauses on cold-start and revisit. |
+| Xero's login flow uses MFA or hardware key. | **Resolved 2026-04-07 (partial).** Phase 1 set `auth: password_totp` from the outset (TOTP confirmed in 1Password before bootstrap). Both Phase 1 bootstraps ran warm so the cold-start TOTP path remains unvalidated end-to-end — tracked as a deferred follow-up. Hardware-key prompts would still surface as `NEEDS_HUMAN`. |
 | `/browse`'s same-domain concurrency rule is enforced more strictly than expected and blocks even sequential batched runs. | The plugin's rule is "no two *concurrent* agents on the same domain" — sequential runs are explicitly fine. Tested on `iteraterecruitment-oncoreservices` and `manpowergroup-fasttrack360` which already work this way. |
-| The three load-bearing MEMORY.md gotchas get lost during the migration (Unit 2). | Unit 2 verification step explicitly grep-checks for distinctive phrases from each gotcha in the destination file. |
+| The three load-bearing MEMORY.md gotchas get lost during the migration (Unit 2). | **Resolved 2026-04-07.** Both bootstrap runs preserved them as `validated` write-back candidates and committed them. Verification gate passed via grep checks. |
 | `scripts/xero-browser-healthcheck.sh` has external callers beyond the retired agents. | Unit 6 explicitly greps before deleting. If callers exist, keep the script and update it to call `/browse`. |
-| `op_item` lookup fails at runtime (1Password CLI unauthenticated, vault renamed, item moved). | First Phase 1 bootstrap run validates `op read` end-to-end. Later runs benefit from `/browse`'s identity-verification fallback to `NEEDS_HUMAN`. |
+| `op_item` lookup fails at runtime (1Password CLI unauthenticated, vault renamed, item moved). | **Resolved 2026-04-07.** First two `/browse` runs validated `op read` resolution against UUID `xqeqosfunrvunkb3tpwvioftqa` in vault `API Credentials`. Later runs benefit from `/browse`'s identity-verification fallback to `NEEDS_HUMAN`. |
+| Reconcile URL pattern in legacy `xero-reconcile` skill recipes (`go.xero.com/BankRec/BankRec.aspx`) does not match the tenant-scoped URL observed during bootstrap (`go.xero.com/app/!rrT86/...`). Migrating recipes verbatim would break Unit 4's playbooks. | Unit 4's first `reconcile-click-ok` run verifies the live URL pattern empirically before `selectors.yaml` hard-codes either path. Captured as an Open question in Unit 4 approach. |
 
 **Dependencies / prerequisites:**
 - Plugin `browser-automation` v0.8.1 installed and loaded (already true).
