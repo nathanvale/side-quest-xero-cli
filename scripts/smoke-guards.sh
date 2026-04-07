@@ -55,7 +55,6 @@ ok "Python syntax checks passed"
 
 bash -n \
   scripts/xero-explorer-runner.sh \
-  scripts/xero-browser-healthcheck.sh \
   scripts/xero-statement-lines-finalize.sh
 ok "Shell syntax checks passed"
 
@@ -71,15 +70,23 @@ if ! rg -n "python3 scripts/xero-cli-extract.py all" .claude/skills/xero-explore
 fi
 ok "extract workflow includes CLI-first accounting extraction"
 
-if ! rg -n "xero-browser-healthcheck.sh --expect-api finance" .claude/skills/xero-explorer/workflows/extract.md >/dev/null 2>&1; then
-  fail "extract workflow is missing finance API healthcheck after switch"
+if ! rg -n 'browser-automation:ba-browse", "api-explorer.xero.com healthcheck' .claude/skills/xero-explorer/workflows/extract.md >/dev/null 2>&1; then
+  fail "extract workflow is missing /browse healthcheck dispatch"
 fi
-ok "extract workflow enforces finance API healthcheck after switch"
+ok "extract workflow dispatches /browse healthcheck"
 
-if ! rg -n "python3 scripts/cleanup-tempdir.py" .claude/skills/xero-explorer/workflows/extract.md >/dev/null 2>&1; then
-  fail "extract workflow is missing hook-safe temp cleanup command"
+if ! rg -n "extract-bankstatementsplus" .claude/skills/xero-explorer/workflows/extract.md >/dev/null 2>&1; then
+  fail "extract workflow is missing /browse statement-line extraction dispatch"
 fi
-ok "extract workflow includes hook-safe temp cleanup command"
+ok "extract workflow dispatches /browse statement-line extraction"
+
+if find .claude/agents -maxdepth 1 -type f -name 'xero-*-agent.md' | grep -q .; then
+  fail "retired xero browser agent files still exist"
+fi
+if find .claude/skills -maxdepth 1 -mindepth 1 -type d -name 'xero-*' ! -name 'xero-cli' ! -name 'xero-explorer' | grep -q .; then
+  fail "retired xero browser skill directories still exist"
+fi
+ok "retired xero browser agents and skills are removed"
 
 bash -n scripts/smoke-hooks.sh
 ok "Hook smoke script syntax checks passed"

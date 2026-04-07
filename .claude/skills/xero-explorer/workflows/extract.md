@@ -3,13 +3,17 @@
 Pull accounting and finance data from Xero API Explorer into local NDJSON files.
 
 Tooling policy:
-- Use `agent-browser` for all API Explorer UI interactions in this workflow.
-- Do not switch to alternate browser tools mid-run; it increases token usage and breaks selector continuity.
+- Use `/browse` (`browser-automation:ba-browse`) for all API Explorer UI
+  interactions in this workflow.
+- Do not dispatch legacy Xero browser agents or call `agent-browser`
+  directly from this workflow.
 
 ## Context
 
 Read before proceeding:
-- [API Explorer navigation](../references/api-explorer-nav.md) - how to navigate the API Explorer UI with agent-browser (includes API switching and parameter filling patterns)
+- [API Explorer navigation](../references/api-explorer-nav.md) - legacy
+  interaction patterns now mirrored into the canonical
+  `api-explorer-xero` domain assets used by `/browse`
 
 ## Process
 
@@ -94,22 +98,17 @@ python3 scripts/xero-env.py get-bank-account-id 2>/dev/null || true
 
 ### Step 2: Ensure browser session
 
-Dispatch the `xero-extract-agent` to verify the browser is ready:
+Dispatch `/browse` to verify the API Explorer session is ready:
 
-```
-Agent(
-  subagent_type="xero-extract-agent",
-  model="sonnet",
-  prompt="""
-TASK: healthcheck
-EXPECT_API: any
-"""
-)
+```text
+Skill("browser-automation:ba-browse", "api-explorer.xero.com healthcheck")
 ```
 
-Parse the Browser Report:
+Parse the canonical managed-domain report:
 - `SUCCESS` -> continue to Step 3
-- `NEEDS_HUMAN` -> relay the reason to the user (e.g., "Please log in to Xero API Explorer in your browser"), wait, then re-dispatch healthcheck
+- `NEEDS_HUMAN` -> relay the reason to the user (for example,
+  "Please log in to Xero API Explorer in your browser"), preserve the
+  `resume_run_id`, then re-dispatch healthcheck
 - `FAILED` -> investigate the reason, attempt recovery (open API Explorer URL manually), then re-dispatch
 
 ### Step 3: CLI auth + tenant preflight
@@ -134,39 +133,6 @@ Ensure `data/` directory exists with secure permissions:
 
 ```bash
 mkdir -p data && chmod 700 data
-```
-
-Create a private temp directory for raw Finance API responses:
-
-```bash
-TMPDIR=$(mktemp -d)
-echo "Using temp dir: $TMPDIR"
-```
-
-Define a clipboard capture helper (macOS/Linux/Wayland compatible, Finance step only):
-
-```bash
-clipboard_to_file() {
-  local out="$1"
-  if command -v pbpaste >/dev/null 2>&1; then
-    pbpaste > "$out"
-    command -v pbcopy >/dev/null 2>&1 && echo -n "" | pbcopy
-    return 0
-  fi
-  if command -v wl-paste >/dev/null 2>&1; then
-    wl-paste --no-newline > "$out"
-    return 0
-  fi
-  if command -v xclip >/dev/null 2>&1; then
-    xclip -selection clipboard -out > "$out"
-    return 0
-  fi
-  if command -v xsel >/dev/null 2>&1; then
-    xsel --clipboard --output > "$out"
-    return 0
-  fi
-  return 1
-}
 ```
 
 #### 4a-4d: Accounting datasets via CLI (default path)
@@ -211,7 +177,10 @@ python3 scripts/xero-cli-extract.py payments
 
 #### 4e: BankStatementsPlus (Finance API)
 
-This step uses the **Finance API**, not the Accounting API. The `xero-extract-agent` handles the entire browser sequence: switching to Finance API, filling parameters, making the request, copying the response, and switching back to Accounting API.
+This step uses the **Finance API**, not the Accounting API. `/browse`
+owns the browser sequence: ensuring the correct API, filling
+parameters, making the request, copying the response, and returning a
+canonical report with the staged response path.
 
 Before dispatching, ensure BANK_ACCOUNT_ID is available:
 
@@ -228,36 +197,33 @@ if [ -z "${BANK_ACCOUNT_ID:-}" ]; then
 fi
 ```
 
-Dispatch the extraction agent:
+Dispatch `/browse`:
 
-```
-Agent(
-  subagent_type="xero-extract-agent",
-  model="sonnet",
-  prompt="""
-TASK: extract-bankstatementsplus
-BANK_ACCOUNT_ID: {BANK_ACCOUNT_ID}
-FROM_DATE: {FromDate from Step 0}
-TO_DATE: {ToDate from Step 0}
-TMPDIR: {TMPDIR}
-"""
+```text
+Skill(
+  "browser-automation:ba-browse",
+  "api-explorer.xero.com extract-bankstatementsplus for Q{N} FY{YY} ({FromDate}..{ToDate}) using BANK_ACCOUNT_ID={BANK_ACCOUNT_ID}"
 )
 ```
 
-Parse the Browser Report:
-- `SUCCESS` -> the raw response is at `findings.raw_file_path`. Continue to envelope inspection.
-- `NEEDS_HUMAN` -> relay to user (auth expiry). After re-login, re-dispatch.
+Parse the canonical report:
+- `SUCCESS` -> `### Findings` includes the staged raw response path
+  (referred to below as `RESPONSE_PATH`). Continue to envelope
+  inspection.
+- `NEEDS_HUMAN` -> relay to user, preserving `resume_run_id`,
+  `human_action`, and `screenshot_path`. After re-login, resume the same
+  flow.
 - `FAILED` -> investigate reason, attempt recovery.
 
 After successful extraction, continue with envelope inspection and conversion:
 
 1. **Inspect response structure** -- the envelope is uncertain:
 ```bash
-python3 scripts/xero-convert.py inspect-envelope "$TMPDIR/xero-bankstatementsplus-raw.json"
+python3 scripts/xero-convert.py inspect-envelope "$RESPONSE_PATH"
 ```
 
 If `inspect-envelope` fails (non-zero exit, invalid JSON, or unrecognized structure):
-1. Save the raw clipboard content to `data/.debug-envelope-raw.json` for inspection
+1. Save a copy of the staged raw response to `data/.debug-envelope-raw.json` for inspection
 2. Report the error to the user with the raw structure summary
 3. Do not attempt to convert -- ask user whether to retry extraction or inspect manually
 
@@ -275,32 +241,32 @@ Save profile:
 
 ```bash
 python3 scripts/xero-convert.py write-envelope-profile \
-  "$TMPDIR/xero-bankstatementsplus-raw.json" \
+  "$RESPONSE_PATH" \
   "data/.xero-bankstatementsplus-envelope.json"
 ```
 
 2. **Convert + update quarter state** (single command):
 ```bash
-./scripts/xero-statement-lines-finalize.sh "$Q" "$FY" "$TMPDIR/xero-bankstatementsplus-raw.json"
+./scripts/xero-statement-lines-finalize.sh "$Q" "$FY" "$RESPONSE_PATH"
 ```
 
-### Step 5: API Explorer navigation (via agent dispatch)
+### Step 5: API Explorer navigation (canonical domain assets)
 
-Browser-based API Explorer navigation is now handled by the `xero-extract-agent`. The agent loads the `xero-api-explorer` skill which contains all dropdown cascade patterns, retry logic, and clipboard handling recipes.
+Browser-based API Explorer navigation is now handled by the canonical
+`api-explorer-xero` managed domain used by `/browse`. The target flows
+own the dropdown cascade patterns, retry logic, and response-copy
+handling.
 
-For any additional API Explorer browser operations not covered by the task types above, dispatch the agent with an appropriate task. See the [API Explorer navigation reference](../references/api-explorer-nav.md) for the underlying patterns the agent uses.
+For any additional API Explorer operations not covered by the task types
+above, dispatch `/browse` with the appropriate domain and target flow.
+See the [API Explorer navigation reference](../references/api-explorer-nav.md)
+only as maintenance context for the underlying patterns.
 
 ### Step 6: Clean up and report
 
-Hook-safe temp cleanup:
-- Do not use `rm -rf` (blocked by ADHD safety guard).
-- Use the checked-in cleanup script:
-
-```bash
-python3 scripts/cleanup-tempdir.py "$TMPDIR" || true
-```
-
-If cleanup is skipped, OS temp cleanup is acceptable (`/tmp`, `/private/tmp`, `/var/folders/...`).
+The raw browser payload stays under `/browse`'s caller-owned transaction
+path for resume/debug purposes. Do not delete those staged files as part
+of the normal extract workflow.
 
 Report results:
 
@@ -334,8 +300,8 @@ python3 scripts/manage-quarters.py status
 - [ ] Files are valid NDJSON (one JSON object per line)
 - [ ] Files written with 0o600 permissions
 - [ ] data/ directory is 0700
-- [ ] Raw JSON responses cleaned up via `cleanup-tempdir.py` (or left in system temp as fallback)
-- [ ] Clipboard cleared after each copy
+- [ ] Raw JSON response remains available via `/browse` transaction state for resume/debug
+- [ ] Raw JSON response path captured from the canonical `/browse` report
 - [ ] Record counts reported to user
 - [ ] Statement lines saved to quarter-scoped file (e.g., `statement-lines-fy25-q4.ndjson`)
 - [ ] `quarters.json` updated with extraction results

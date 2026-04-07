@@ -1,28 +1,35 @@
 # Workflow: Browser-Based Reconciliation
 
-Orchestrator workflow for Opus. Dispatches `xero-reconcile-agent` (Haiku) to execute batches of pre-validated reconciliation actions on the Xero Reconcile UI.
+Orchestrator workflow for Opus. Dispatches `/browse`
+(`browser-automation:ba-browse`) to execute pre-validated reconciliation
+actions on the Xero Reconcile UI.
+
+**Throughput note:** reconcile is single-worker only. The legacy
+parallel worker fan-out is retired because `/browse` enforces the
+same-domain concurrency rule for `go.xero.com`. Track future restoration
+in project memory rather than reintroducing `worker-N` sessions here.
 
 ## Architecture
 
 ```
-Opus (orchestrator)                    Haiku (executor)
-┌──────────────────────┐               ┌──────────────────────┐
-│ Screenshot page      │               │ xero-reconcile-agent │
-│ Parse visible lines  │  dispatch →   │   skills:            │
-│ Lookup in queue      │               │   - browser-automation│
-│ Validate bank rules  │  ← result     │   - xero-reconcile   │
-│ Track progress       │               │                      │
-│ Show ADHD UX         │               │ Finds refs, fills,   │
-└──────────────────────┘               │ clicks OK, reports   │
-                                       └──────────────────────┘
+Opus (orchestrator)                    /browse + browser-agent (executor)
+┌──────────────────────┐               ┌──────────────────────────────┐
+│ Build queue-backed   │               │ go-xero canonical domain     │
+│ batch instructions   │  dispatch →   │ target flows + selectors     │
+│ Validate bank rules  │               │ + playbooks/scripts          │
+│ Track progress       │  ← report     │                              │
+│ Show ADHD UX         │               │ Fills, clicks OK, reports    │
+└──────────────────────┘               └──────────────────────────────┘
 ```
 
-**Opus decides.** Haiku executes. No financial reasoning in the agent.
+**Opus decides.** `/browse` executes. No financial reasoning lives in
+the browser layer.
 
 ## Prerequisites
 
 1. **Post queue ready:** `data/.post-queue-fy{YY}-q{N}.json` exists with all APPROVE'd items
-2. **Browser session active:** `agent-browser --auto-connect get url` returns a valid page
+2. **Browser session active:** `/browse go.xero.com healthcheck`
+   returns `Status: SUCCESS`
 3. **Xero logged in:** User is authenticated in the Xero browser session
 4. **Bank account ID known:** From `.xero-config.json` or seal
 
@@ -33,20 +40,24 @@ Q=4          # Quarter number (1-4)
 FY=25        # Two-digit financial year
 QUEUE="data/.post-queue-fy${FY}-q${Q}.json"
 BANK_ACCOUNT_ID="..."  # From .xero-config.json or seal
-BATCH_SIZE=3  # Lines per agent dispatch (configurable)
+BATCH_SIZE=3  # Lines per /browse dispatch (configurable)
 ```
 
 ## Orchestration Loop
 
-### Step 1: Navigate
+### Step 1: Verify browser state
 
-```bash
-agent-browser --auto-connect navigate "https://go.xero.com/BankRec/BankRec.aspx?accountID=$BANK_ACCOUNT_ID"
+```text
+Skill("browser-automation:ba-browse", "go.xero.com healthcheck")
 ```
 
-### Step 2: Screenshot and parse visible lines
+If `NEEDS_HUMAN`, relay the `human_action` from the report and resume
+with the same `resume_run_id` after Nathan re-authenticates.
 
-Take a screenshot, read it, extract from each visible statement line:
+### Step 2: Build the next visible batch
+
+Review the headed Xero Reconcile page and extract from each visible
+statement line:
 - Date
 - Description (bank narrative)
 - Amount (Spent or Received)
@@ -73,32 +84,29 @@ Then determine the action:
 
 **Bank rule validation is Opus's job.** Read the pre-filled account code from the screenshot, compare against queue data. Only send `CLICK_OK` if exact match.
 
-### Step 4: Dispatch agent
+### Step 4: Dispatch `/browse`
 
-Use the Agent tool to dispatch `xero-reconcile-agent`:
+Dispatch the canonical `go-xero` batch executor:
 
-```
-Agent(
-  subagent_type="xero-reconcile-agent",
-  model="haiku",
-  prompt="""
-BATCH_SIZE: 3
-
-LINE 1: CLICK_OK
-LINE 2: FILL Who="KMART 1147 CHADSTONE AU" What="911"
-LINE 3: CLEAR_AND_FILL What="485"
-"""
+```text
+Skill(
+  "browser-automation:ba-browse",
+  "go.xero.com reconcile-batch BATCH_SIZE=3 LINE_1=CLICK_OK LINE_2='FILL Who=\"KMART 1147 CHADSTONE AU\" What=\"911\"' LINE_3='CLEAR_AND_FILL What=\"485\"'"
 )
 ```
 
+The payload should stay ordered and explicit. `/browse` owns the DOM
+interaction details and returns a canonical managed-domain report.
+
 ### Step 5: Verify and continue
 
-Parse the agent's result. The agent returns both a legacy `RESULT:` line and a `BROWSER_REPORT`:
+Parse the canonical report:
 - Check the new reconcile count dropped by the expected amount (from `findings.reconcile_count`)
-- If `status: NEEDS_HUMAN`, relay to user (session expired) and wait for re-login
-- If any lines reported SKIPPED, investigate
-- If `gotchas_discovered > 0`, the agent appended new issues to `docs/gotchas/browser-agent/go-xero.md`
-- Take a fresh screenshot for the next batch
+- If `status: NEEDS_HUMAN`, relay `resume_run_id`, `human_action`,
+  and `screenshot_path` to the user and wait for re-login
+- If any lines reported `SKIPPED`, investigate before sending the next
+  batch
+- Use a fresh visual check before assembling the next sequential batch
 - Show progress (see ADHD UX below)
 
 ### Step 6: Repeat
@@ -118,9 +126,9 @@ Continue Steps 2-5 until:
 - If still ambiguous, process the first match
 
 ### Session expired
-- Agent reports `SKIPPED | session expired`
+- `/browse` returns `Status: NEEDS_HUMAN` with a resume block
 - Ask user to re-login in the headed Chrome window
-- Resume from current position (reconciled lines won't reappear)
+- Resume from the returned `resume_run_id`
 
 ### Date boundary
 - When visible lines cross into the next quarter (e.g., 1 Jul appears after 30 Jun items)
@@ -136,17 +144,6 @@ Browser reconcile Q4 FY25: 147/287 done (51%) | 1046→899
 ```
 
 Milestones at 10%, 25%, 50%, 75%, 90%, 100%.
-
-## Parallel Mode (future)
-
-For high-volume quarters, dispatch multiple agents with `--session` isolation:
-
-```
-Agent(session_id="xero-1", lines=[1,2,3])  ← page 1
-Agent(session_id="xero-2", lines=[4,5,6])  ← page 2 (different browser tab)
-```
-
-Each agent uses `agent-browser --session {session_id}` instead of `--auto-connect`. Requires multiple Xero tabs open to different date-filtered views of the Reconcile page.
 
 ## Rollback
 

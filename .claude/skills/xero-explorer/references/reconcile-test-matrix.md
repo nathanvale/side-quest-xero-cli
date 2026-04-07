@@ -43,7 +43,7 @@ Focused checks for UX-critical reconcile behavior.
 - Missing selector retries with backoff 0.5s/1s/2s
 - After retry exhaustion, state saved and actionable next step shown
 - Snapshot + URL captured in failure context
-- `scripts/xero-browser-healthcheck.sh` passes before long runs
+- `/browse` healthcheck passes before long runs
 
 ## Progress Semantics
 

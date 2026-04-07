@@ -165,6 +165,17 @@ After running `bun run setup`:
 2. Create changesets for user-facing changes
 3. Use named exports (no defaults)
 
+### Browser Automation
+
+- Route Xero browser work through `/browse`
+  (`browser-automation:ba-browse`), not bespoke Xero browser agents.
+- Use `api-explorer.xero.com` target flows for Finance API extraction and
+  API Explorer POST operations.
+- Use `go.xero.com` target flows for browser reconciliation.
+- Reconcile is single-worker until upstream same-domain browser session
+  isolation exists. Do not reintroduce `worker-N` session fan-out in
+  repo-local workflow docs.
+
 ### NEVER
 
 1. Push directly to main (pre-push hook blocks)

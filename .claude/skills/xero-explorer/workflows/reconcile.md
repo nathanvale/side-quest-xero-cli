@@ -60,8 +60,8 @@ Never execute placeholder literals (`Q`, `FY`) directly.
 
 Before long sessions, run:
 
-```bash
-./scripts/xero-browser-healthcheck.sh
+```text
+Skill("browser-automation:ba-browse", "api-explorer.xero.com healthcheck")
 ```
 
 ### Step 1: Resolve and lock target quarter
@@ -549,43 +549,25 @@ Validation rules:
 
 1. **Ensure browser session is valid:**
 
-Dispatch the `xero-extract-agent` for a healthcheck:
+Dispatch `/browse` for a healthcheck:
 
-```
-Agent(
-  subagent_type="xero-extract-agent",
-  model="sonnet",
-  prompt="""
-TASK: healthcheck
-EXPECT_API: accounting
-"""
-)
+```text
+Skill("browser-automation:ba-browse", "api-explorer.xero.com healthcheck")
 ```
 
-If `NEEDS_HUMAN`, relay to user. If the healthcheck shows Finance API instead of Accounting, dispatch:
+If `NEEDS_HUMAN`, relay the resume metadata to the user.
+If the report shows Finance API instead of Accounting, dispatch:
 
-```
-Agent(
-  subagent_type="xero-extract-agent",
-  model="sonnet",
-  prompt="""
-TASK: ensure-api
-API: accounting
-"""
-)
+```text
+Skill("browser-automation:ba-browse", "api-explorer.xero.com ensure-api accounting")
 ```
 
-2. **Select BankTransactions endpoint and POST operation** via the agent:
+2. **Select BankTransactions endpoint and POST operation** via `/browse`:
 
-```
-Agent(
-  subagent_type="xero-extract-agent",
-  model="sonnet",
-  prompt="""
-TASK: post-banktransaction
-BODY: {complete JSON body}
-EXPECT_API: accounting
-"""
+```text
+Skill(
+  "browser-automation:ba-browse",
+  "api-explorer.xero.com post-banktransaction BODY={complete JSON body}"
 )
 ```
 
@@ -627,7 +609,7 @@ python3 scripts/xero-reconcile-report.py export-confirmed "$STATE_FILE"
 
 ### Browser self-correction
 
-If agent-browser returns unexpected page state:
+If `/browse` returns unexpected page state:
 1. Snapshot to verify current page
 2. Wrong page: navigate back to API Explorer BankTransactions endpoint
 3. Modal/dialog blocking: dismiss it, re-snapshot

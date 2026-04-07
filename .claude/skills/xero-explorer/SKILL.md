@@ -14,10 +14,13 @@ disable-model-invocation: true
 
 Orchestrate Xero accounting operations through a hybrid flow:
 - `xero-cli` for standard Accounting API endpoints
-- `agent-browser` only for Finance API statement lines (`BankStatementsPlus`)
+- `browser-automation:ba-browse` (`/browse`) for Finance API extraction,
+  API Explorer POSTs, and browser reconciliation
 - Google Sheets CSV review as the default human review surface
 
 Designed to minimize browser automation while restricted scopes remain blocked.
+All browser dispatch goes through `/browse`; this skill never calls
+domain-specific browser sub-agents directly.
 
 ## Core Principles
 
@@ -114,9 +117,9 @@ The full reconciliation pipeline for a quarter:
 1. **Validate** -- `python3 scripts/manage-quarters.py gate Q FY`
 2. **Export** -- Download QIF from CommBank online banking. Save to `data/bank-export-fy{YY}-q{N}-{months}.qif`
 3. **Import** -- Upload QIF into Xero (manual via Xero UI; API import not yet available publicly -- Bank Feeds API is partner-only)
-4. **Extract** -- Pull accounting data via `xero-cli` + statement lines via `agent-browser` (`/xero-explorer extract`)
+4. **Extract** -- Pull accounting data via `xero-cli` + statement lines via `/browse` (`/xero-explorer extract`)
 5. **CSV review** -- Default path: seal -> export -> review -> merge -> verify -> export queue (`workflows/csv-review.md`)
-6. **Browser reconcile** -- Automate the Xero Reconcile UI via `agent-browser` to fill Who/What/Why and click OK (`workflows/browser-reconcile.md`)
+6. **Browser reconcile** -- Automate the Xero Reconcile UI via `/browse` to fill Who/What/Why and click OK (`workflows/browser-reconcile.md`)
 7. **Rapid-fire reconcile** -- Fallback only for the final stubborn items or when the user explicitly wants a live session (`/xero-explorer reconcile`)
 
 **Why extraction can't be skipped:** The QIF bank export has the raw transactions, but extraction from Xero confirms they're actually imported and visible to Xero's reconciliation engine. Extraction provides:
@@ -162,7 +165,7 @@ Parse all files:
 | `data/invoices.ndjson` | `xero-cli invoices --json` (Accounting API /Invoices) | `invoices[]` |
 | `data/contacts.ndjson` | `xero-cli contacts --json` (Accounting API /Contacts) | `contacts[]` |
 | `data/payments.ndjson` | `xero-cli payments --json` (Accounting API /Payments) | `payments[]` |
-| `data/statement-lines-fy{YY}-q{N}.ndjson` | `agent-browser` + Finance API /BankStatementsPlus | `statements[].statementLines[]` (per quarter) |
+| `data/statement-lines-fy{YY}-q{N}.ndjson` | `/browse` -> `api-explorer.xero.com extract-bankstatementsplus` | `statements[].statementLines[]` (per quarter) |
 
 **Statement lines are quarter-scoped** -- each quarter gets its own file so previous extractions are never overwritten.
 
@@ -194,7 +197,7 @@ Then ask: What would you like to do?
 
 1. **[Extract data](workflows/extract.md)** -- Pull latest data via CLI-first hybrid into NDJSON files (Accounting via CLI, Finance via browser)
 2. **[CSV review](workflows/csv-review.md)** -- Recommended: offline seal -> Sheets review -> drift check -> export queue
-3. **[Browser reconcile](workflows/browser-reconcile.md)** -- Automate Xero Reconcile UI via `agent-browser` (fills Who/What/Why, clicks OK)
+3. **[Browser reconcile](workflows/browser-reconcile.md)** -- Automate Xero Reconcile UI via `/browse` (fills Who/What/Why, clicks OK)
 4. **Status** -- Check reconciliation progress for a specific quarter
 5. **Quarter status** -- Show which quarters have bank exports, extractions, and reconciliation progress
 6. **[New quarter setup](workflows/new-quarter.md)** -- Add/validate a new quarter's QIF export before extraction
@@ -209,7 +212,7 @@ Before starting reconciliation, read:
 - `extract`/`pull` -> [Extract](workflows/extract.md)
 - `csv`/`sheet`/`spreadsheet`/`review loop` -> [CSV Review](workflows/csv-review.md)
 - `reconcile`/`match` -> [CSV Review](workflows/csv-review.md) by default; use [Reconcile](workflows/reconcile.md) only when the user explicitly wants live rapid-fire reconciliation
-- `browser reconcile`/`click reconcile`/`go reconcile`/`reconcile browser` -> [Browser Reconcile](workflows/browser-reconcile.md) (automate Xero Reconcile UI via agent-browser)
+- `browser reconcile`/`click reconcile`/`go reconcile`/`reconcile browser` -> [Browser Reconcile](workflows/browser-reconcile.md) (automate Xero Reconcile UI via `/browse`)
 - `status`/`progress` -> Status Check (below)
 - `quarters` -> Quarter status (below)
 - `new quarter`/`setup quarter`/`download qif` -> [New quarter setup](workflows/new-quarter.md)
@@ -226,7 +229,7 @@ Before starting reconciliation, read:
     - `mode`: `batch` | `rapid-fire`
     - `--dry-run`: classify + preview only, no POST writes
   - Substitute the concrete quarter values before running (never run `Q FY` placeholders literally)
-  - Run `./scripts/xero-browser-healthcheck.sh` before long reconcile sessions
+  - Run `/browse` healthcheck for the relevant Xero domain before long browser sessions
 - For extract: ask which quarter (show available from quarters.json)
 - For reconcile: check quarter-scoped `data/statement-lines-fy{YY}-q{N}.ndjson` exists
 - For reconcile, start with:
@@ -266,30 +269,39 @@ python3 scripts/manage-quarters.py next-action
 Safety default:
 - If user is uncertain, run reconcile in dry-run first (`--dry-run`) and require explicit write interlock phrase before POST.
 
-## Agent Architecture
+## Browser Architecture
 
-Browser automation is delegated to specialized agents:
-- **`xero-extract-agent`** (Sonnet): API Explorer extraction and POST operations. Handles dropdown cascades, parameter filling, clipboard capture, and API switching.
-- **`xero-reconcile-agent`** (Haiku): Reconcile page DOM execution. Fills Who/What, clicks OK, reports count.
+Browser automation is delegated through the canonical `/browse`
+dispatcher:
+- `api-explorer.xero.com` -> `healthcheck`, `ensure-api`,
+  `extract-bankstatementsplus`, `post-banktransaction`
+- `go.xero.com` -> `healthcheck`, `reconcile-click-ok`,
+  `reconcile-fill`, `reconcile-clear-and-fill`, `reconcile-batch`
 
-These agents return structured Browser Reports (`SUCCESS`/`PARTIAL`/`FAILED`/`NEEDS_HUMAN`). Opus (this skill) makes all financial decisions; agents only execute pre-validated actions.
+`/browse` returns canonical managed-domain reports with `SUCCESS`,
+`PARTIAL`, `FAILED`, or `NEEDS_HUMAN` plus structured `Findings` and
+`Resume` blocks. `xero-explorer` remains the financial orchestrator; it
+decides what should happen and `/browse` executes the browser work.
 
-Both agents accumulate gotchas in `docs/gotchas/browser-agent/` for their respective domains.
+Reconcile is intentionally single-worker. `/browse` enforces the
+same-domain concurrency rule for `go.xero.com`, so the previous parallel
+worker fan-out is retired until upstream browser-session isolation
+exists.
 
 ## Browser Prerequisites
 
-Before either workflow, verify the browser session by dispatching a healthcheck:
+Before any browser-backed workflow, verify the relevant domain through
+`/browse`:
 
-```
-Agent(
-  subagent_type="xero-extract-agent",
-  model="sonnet",
-  prompt="TASK: healthcheck\nEXPECT_API: any"
-)
+```text
+Skill("browser-automation:ba-browse", "api-explorer.xero.com healthcheck")
+Skill("browser-automation:ba-browse", "go.xero.com healthcheck")
 ```
 
-- If `NEEDS_HUMAN`, tell the user to log in manually then resume
-- If session expired, tell the user to log in manually then resume
+- If `NEEDS_HUMAN`, tell the user to log in manually and resume with the
+  same run context
+- If the report shows identity mismatch or expired session, stop before
+  any write-capable flow
 
 ## Success Criteria
 

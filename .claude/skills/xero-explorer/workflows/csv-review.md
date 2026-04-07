@@ -8,7 +8,7 @@ Use this when you want the lowest-friction reconciliation path:
 4. Let Nathan review in Sheets at his own pace
 5. Download, validate, merge updates, and iterate
 6. Export the post queue when the CSV is ready
-7. Browser reconciliation via Xero UI (agent-browser)
+7. Browser reconciliation via Xero UI (`/browse`)
 
 ## Variables
 
@@ -127,19 +127,22 @@ If this fails, stop. Xero changed underneath the reviewed CSV, so regenerate or 
 ## Phase 6: Browser reconciliation
 
 The Xero API cannot reconcile statement lines -- it can only create orphaned transactions.
-Instead, automate the Xero Reconcile UI via `agent-browser` to create+reconcile in one step.
+Instead, automate the Xero Reconcile UI via `/browse` to
+create+reconcile in one step.
 
 **Full workflow:** See [browser-reconcile.md](browser-reconcile.md)
 
 **Quick summary:**
 
-1. Navigate to Xero Reconcile page: `go.xero.com/BankRec/BankRec.aspx?accountID=$BANK_ACCOUNT_ID`
+1. Run `/browse go.xero.com healthcheck`, then dispatch the next
+   sequential reconcile batch through `/browse`
 2. For each visible statement line (~10 per page):
    a. Match to queue item by amount + date using `scripts/reconcile-browser-lookup.py`
    b. If bank rule pre-filled: **validate** contact + account code against queue data first, then click OK
    c. If empty or mismatch: fill Who/What from queue data, then click OK
 3. Page auto-refreshes with next batch after each OK
-4. Progress saved to `data/.browser-reconcile-state-fy{YY}-q{N}.json` after each OK
+4. Progress saved to `data/.browser-reconcile-state-fy{YY}-q{N}.json`
+   after each successful batch
 5. Repeat until all Q{N} items are reconciled
 
 **Rollback:** Browser-reconciled transactions cannot be un-reconciled via API. Use "Remove & Redo" in the Xero UI (Account Transactions -> select -> Remove & Redo).

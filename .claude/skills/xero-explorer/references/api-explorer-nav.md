@@ -1,6 +1,9 @@
 # API Explorer Navigation Reference
 
-> **Note:** This reference is also loaded as the `xero-api-explorer` skill by `xero-extract-agent`. Prefer dispatching the agent over running these commands directly.
+> **Note:** These patterns now live behind the canonical
+> `api-explorer-xero` managed domain used by `/browse`. Keep this file as
+> maintenance context; prefer dispatching
+> `browser-automation:ba-browse` over running commands directly.
 
 Patterns for driving the Xero API Explorer at `api-explorer.xero.com` via `agent-browser`.
 
